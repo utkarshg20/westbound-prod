@@ -1,0 +1,11 @@
+{
+  "name": "sammy_hero_lora_v1",
+  "description": "Import into ComfyUI on RunPod. Train LoRA on docs/dan-ref-intake/*.png",
+  "nodes": {
+    "load_checkpoint": { "ckpt_name": "sd_xl_base.safetensors" },
+    "lora_loader": { "lora_name": "sammy_lora_v1.safetensors", "strength": 0.85 },
+    "prompt": "Sammy Rane, mid-30s male, denim flannel, dim bar, neon edge light, cinematic",
+    "negative": "cartoon, deformed, extra fingers, glossy CGI",
+    "output": { "width": 1024, "height": 1024, "batch": 10 }
+  }
+}

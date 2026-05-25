@@ -1,0 +1,38 @@
+{
+  "name": "Westbound — YouTube Daily Assembly",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] }
+      },
+      "name": "Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_API_URL}}/api/jobs/enqueue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{$env.N8N_WEBHOOK_SECRET}}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "type", "value": "youtube.assemble_video" },
+            { "name": "payload", "value": "={{ JSON.stringify({ channelSlug: 'lofi' }) }}" }
+          ]
+        }
+      },
+      "name": "Enqueue YT",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [480, 300]
+    }
+  ],
+  "connections": {
+    "Daily": { "main": [[{ "node": "Enqueue YT", "type": "main", "index": 0 }]] }
+  }
+}

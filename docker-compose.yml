@@ -1,0 +1,54 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=America/New_York
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-change-me-in-production}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - WORKER_PORT=3001
+    depends_on:
+      - redis
+    profiles:
+      - full
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    profiles:
+      - full
+
+volumes:
+  redis_data:
+  n8n_data:

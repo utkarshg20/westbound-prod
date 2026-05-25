@@ -1,0 +1,38 @@
+{
+  "name": "Westbound — Sync Generate Batch",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "After Signal Ingest",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_API_URL}}/api/jobs/enqueue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{$env.N8N_WEBHOOK_SECRET}}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "type", "value": "sync.generate_batch" },
+            { "name": "payload", "value": "={{ JSON.stringify({ limit: 5 }) }}" }
+          ]
+        }
+      },
+      "name": "Enqueue Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [480, 300]
+    }
+  ],
+  "connections": {
+    "After Signal Ingest": {
+      "main": [[{ "node": "Enqueue Generate", "type": "main", "index": 0 }]]
+    }
+  }
+}
