@@ -1,19 +1,27 @@
 import type { Job } from "bullmq";
 import {
-  createJobWorker,
+  createAllWorkers,
   createSupabaseAdmin,
   logger,
+  recordDeadLetterJob,
   type JobType,
   type WestboundJobPayload,
 } from "@westbound/platform";
 import {
   AssetLibrary,
+  enqueueChannelVideo,
   runStudioPoc,
   runVerticalSlice,
   StudioPipeline,
   YouTubeFactory,
 } from "@westbound/studio";
-import { BriefMatcher, SyncEngine } from "@westbound/sync-engine";
+import {
+  BriefMatcher,
+  SyncEngine,
+  routeTrackToEngines,
+  runSupervisorOutreachDrafts,
+} from "@westbound/sync-engine";
+import { captureJobException } from "./sentry.js";
 
 async function logError(
   job: Job<WestboundJobPayload>,
@@ -27,12 +35,13 @@ async function logError(
       message,
       payload: job.data.payload,
     });
+    await recordDeadLetterJob(job, message);
   } catch {
     logger.error("Failed to persist job error", { message });
   }
 }
 
-export function startWorkers(): void {
+export function startWorkers(): ReturnType<typeof createAllWorkers> {
   const handlers: Partial<
     Record<JobType, (job: Job<WestboundJobPayload>) => Promise<void>>
   > = {
@@ -47,6 +56,9 @@ export function startWorkers(): void {
         Number(job.data.payload.limit ?? 5)
       );
       await engine.submitToCurationQueue(ids);
+      for (const id of ids) {
+        await routeTrackToEngines(id);
+      }
       logger.info("Sync batch generated", { trackCount: ids.length });
     },
     "sync.upload_track": async (job) => {
@@ -59,10 +71,20 @@ export function startWorkers(): void {
       const n = await matcher.runMatchAndSubmit();
       logger.info("Brief match submitted", { count: n });
     },
+    "sync.supervisor_outreach": async () => {
+      const n = await runSupervisorOutreachDrafts();
+      logger.info("Supervisor outreach drafted", { count: n });
+    },
     "studio.generate_episode": async (job) => {
       const runId = String(job.data.payload.runId ?? job.data.productionRunId);
       const pipeline = await StudioPipeline.create();
       await pipeline.runEpisodeGeneration(runId);
+    },
+    "studio.trend_hijack": async (job) => {
+      const topic = String(job.data.payload.topic ?? "breaking");
+      const channelSlug = String(job.data.payload.channelSlug ?? "slow_money");
+      await enqueueChannelVideo(channelSlug, topic);
+      logger.info("Trend hijack video enqueued", { topic, channelSlug });
     },
     "studio.ingest_asset": async (job) => {
       const library = await AssetLibrary.create();
@@ -85,10 +107,12 @@ export function startWorkers(): void {
     },
     "youtube.assemble_video": async (job) => {
       const factory = new YouTubeFactory();
-      const channel = String(job.data.payload.channelSlug ?? "lofi");
+      const channel = String(job.data.payload.channelSlug ?? "lofi_compounder");
       if (job.data.payload.proof14 === true) {
         const ids = await factory.schedule14DayProof(channel);
         logger.info("14-day YT proof scheduled", { count: ids.length, channel });
+      } else if (job.data.payload.topic) {
+        await enqueueChannelVideo(channel, String(job.data.payload.topic));
       } else {
         await factory.runSingleChannelProof(channel);
       }
@@ -100,22 +124,64 @@ export function startWorkers(): void {
       await pipeline.publish(runId);
       logger.info("Episode published", { runId });
     },
-    "agent.continuity_check": async (_job) => {
+    "youtube.enqueue_channel_video": async (job) => {
+      await enqueueChannelVideo(
+        String(job.data.payload.channelSlug),
+        String(job.data.payload.topic ?? "default")
+      );
+    },
+    "youtube.title_thumb_rotate": async (job) => {
+      logger.info("Title/thumb rotation cron", {
+        videoId: job.data.payload.videoId,
+      });
+    },
+    "track.multi_route": async (job) => {
+      await routeTrackToEngines(String(job.data.payload.trackId));
+    },
+    "dsp.release_candidate": async (job) => {
+      const { createDspRelease } = await import("@westbound/dsp");
+      const trackId = String(job.data.payload.trackId);
+      await createDspRelease(
+        String(job.data.productionRunId ?? crypto.randomUUID()),
+        trackId,
+        new Date()
+      );
+      logger.info("DSP release candidate", { trackId });
+    },
+    "dsp.compilation_batch": async (job) => {
+      logger.info("DSP compilation batch queued", { trackId: job.data.payload.trackId });
+    },
+    "identifyy.register": async (job) => {
+      logger.info("Identifyy registration queued", { trackId: job.data.payload.trackId });
+    },
+    "agent.continuity_check": async () => {
       logger.info("Continuity check runs inline in studio.generate_episode");
     },
-    "agent.metadata_tag": async (_job) => {
+    "agent.metadata_tag": async () => {
       logger.info("Metadata tag runs inline in sync.generate_batch");
     },
   };
 
-  const worker = createJobWorker(handlers);
+  const workers = createAllWorkers(handlers);
 
-  worker.on("failed", (job, err) => {
-    if (job) void logError(job, err.message);
-    logger.error("Job failed", { jobId: job?.id, error: err.message });
-  });
+  for (const worker of workers) {
+    worker.on("failed", (job, err) => {
+      if (job) void logError(job, err.message);
+      logger.error("Job failed", {
+        jobId: job?.id,
+        jobType: job?.data.type,
+        productionRunId: job?.data.productionRunId,
+        error: err.message,
+      });
+      captureJobException(err, {
+        jobType: job?.data.type,
+        productionRunId: job?.data.productionRunId,
+      });
+    });
+  }
 
-  logger.info("Worker started");
+  logger.info("Workers started", { count: workers.length });
+  return workers;
 }
 
 export async function runPocJob() {

@@ -1,7 +1,25 @@
 import Link from "next/link";
+import { createSupabaseAdmin } from "@westbound/platform";
 import { RoyaltyUploadForm } from "./royalty-upload-form";
 
-export default function OpsPage() {
+export const dynamic = "force-dynamic";
+
+async function loadDlq() {
+  try {
+    const db = createSupabaseAdmin();
+    const { data } = await db
+      .from("dead_letter_jobs")
+      .select("id, job_type, error_message, created_at")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    return data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export default async function OpsPage() {
+  const dlq = await loadDlq();
   return (
     <>
       <h1>Ops — Week 6</h1>
@@ -30,6 +48,24 @@ export default function OpsPage() {
             <Link href="/errors">Errors</Link> — top job failures
           </li>
         </ul>
+      </section>
+
+      <section style={{ marginBottom: "2rem" }}>
+        <h2 style={{ fontSize: "1rem" }}>Dead letter queue</h2>
+        <p style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+          <Link href="/metrics">Metrics</Link> · Retry via POST /api/ops/dlq-retry
+        </p>
+        {dlq.length === 0 ? (
+          <p style={{ color: "var(--muted)" }}>No failed jobs in DLQ.</p>
+        ) : (
+          <ul style={{ fontSize: "0.85rem" }}>
+            {dlq.map((row) => (
+              <li key={String(row.id)}>
+                {String(row.job_type)} — {String(row.error_message).slice(0, 80)}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section>

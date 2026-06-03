@@ -1,6 +1,7 @@
 import { createAdapterRegistry } from "@westbound/adapters";
 import {
   createLlmClient,
+  scoreBriefVariant,
   signalToSunoPrompt,
   tagTrackMetadata,
 } from "@westbound/agents";
@@ -26,14 +27,31 @@ export class SyncEngine {
 
     for (const signal of signals) {
       const suno = await signalToSunoPrompt(llm, signal);
+      if (!suno) continue;
+
       const variations = await this.adapters.music.generate({
         prompt: suno.prompt,
         instrumental: suno.instrumental,
         variations: 4,
       });
 
-      for (const v of variations) {
-        const meta = await tagTrackMetadata(llm, `Sync ${v.id.slice(0, 8)}`, suno.prompt);
+      for (let vi = 0; vi < variations.length; vi++) {
+        const v = variations[vi]!;
+        const meta = await tagTrackMetadata(
+          llm,
+          `Sync ${v.id.slice(0, 8)}`,
+          suno.prompt
+        );
+        if (!meta) continue;
+
+        const briefScore = await scoreBriefVariant(
+          llm,
+          signal.raw_payload,
+          { ...meta, sunoPrompt: suno, variantIndex: vi }
+        );
+
+        if (briefScore.discard) continue;
+
         const track = await this.repo.createTrack({
           project_id: syncProject.id,
           production_run_id: null,
@@ -47,7 +65,15 @@ export class SyncEngine {
             sunoPrompt: suno,
             audioUri: v.uri,
             disclosure: "AI-assisted, human-curated",
-            qaStatus: "pending_curation",
+            qaStatus: briefScore.holdForDan
+              ? "hold_for_dan"
+              : briefScore.passed
+                ? "pending_curation"
+                : "pending_curation",
+            briefScore: briefScore.total,
+            rubricBreakdown: briefScore.breakdown,
+            signalId: signal.id,
+            variantIndex: vi,
           },
         });
         trackIds.push(track.id);

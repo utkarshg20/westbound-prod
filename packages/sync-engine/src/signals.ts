@@ -27,9 +27,27 @@ export async function ingestSignals(
     raw_payload: s.raw_payload ?? {},
   }));
 
-  const { data, error } = await db.from("signals").insert(rows).select();
-  if (error) throw error;
-  return data as Signal[];
+  const withExternal = rows.filter((r) => r.external_id);
+  const withoutExternal = rows.filter((r) => !r.external_id);
+
+  const results: Signal[] = [];
+
+  if (withExternal.length) {
+    const { data, error } = await db
+      .from("signals")
+      .upsert(withExternal, { onConflict: "source,external_id", ignoreDuplicates: true })
+      .select();
+    if (error) throw error;
+    if (data) results.push(...(data as Signal[]));
+  }
+
+  if (withoutExternal.length) {
+    const { data, error } = await db.from("signals").insert(withoutExternal).select();
+    if (error) throw error;
+    if (data) results.push(...(data as Signal[]));
+  }
+
+  return results;
 }
 
 export async function ingestDailySignals(): Promise<number> {

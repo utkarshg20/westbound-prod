@@ -26,6 +26,13 @@ async function loadRuns(): Promise<ProductionRun[]> {
 
 export default async function PipelinePage() {
   const runs = await loadRuns();
+
+  const nav = (
+    <p style={{ marginBottom: "1rem" }}>
+      <a href="/review">Review</a> · <a href="/metrics">Metrics</a> ·{" "}
+      <a href="/ops">Ops</a> · <a href="/revenue">Revenue</a>
+    </p>
+  );
   const totalCostCents = runs.reduce((s, r) => s + r.cost_cents, 0);
   const byStage = Object.fromEntries(
     STAGES.map((s) => [s, runs.filter((r) => r.stage === s)])
@@ -34,6 +41,7 @@ export default async function PipelinePage() {
   return (
     <>
       <h1>Production pipeline</h1>
+      {nav}
       <InfraStatus />
       <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
         Total pipeline cost (tracked): ${(totalCostCents / 100).toFixed(2)}

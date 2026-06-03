@@ -8,7 +8,9 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts",
+    "lint": "eslint src --max-warnings 0"
   },
   "dependencies": {
     "@westbound/platform": "workspace:*",

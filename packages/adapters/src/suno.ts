@@ -3,7 +3,7 @@ import type {
   MusicGenerateInput,
   MusicGenerator,
 } from "./interfaces.js";
-import { apiPost } from "./http.js";
+import { fetchJson } from "./fetch-hardened.js";
 
 export class SunoMusicGenerator implements MusicGenerator {
   readonly name = "suno";
@@ -18,22 +18,26 @@ export class SunoMusicGenerator implements MusicGenerator {
     const results: GenerationResult[] = [];
 
     for (let i = 0; i < n; i++) {
-      const data = await apiPost<{
+      const data = await fetchJson<{
         id?: string;
         audio_url?: string;
         url?: string;
         clips?: Array<{ id: string; audio_url?: string }>;
-      }>(
-        `${this.baseUrl}/api/generate`,
-        {
+      }>(`${this.baseUrl}/api/generate`, {
+        method: "POST",
+        timeoutMs: 300_000,
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
           prompt: input.prompt,
           lyrics: input.lyrics,
           make_instrumental: input.instrumental ?? false,
           persona_id: input.personaId,
           wait_audio: true,
-        },
-        { Authorization: `Bearer ${this.apiKey}` }
-      );
+        }),
+      });
 
       const clip = data.clips?.[0];
       const id = clip?.id ?? data.id ?? crypto.randomUUID();

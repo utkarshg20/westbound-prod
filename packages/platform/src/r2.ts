@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -61,9 +64,11 @@ export class AssetStorage {
     private readonly config: R2Config
   ) {}
 
-  static fromEnv(): AssetStorage {
+  static async fromEnv(): Promise<AssetStorage> {
     const config = getR2Config();
-    return new AssetStorage(createR2Client(config), config);
+    const client = createR2Client(config);
+    await client.send(new HeadBucketCommand({ Bucket: config.bucketName }));
+    return new AssetStorage(client, config);
   }
 
   async upload(
@@ -77,9 +82,27 @@ export class AssetStorage {
         Key: key,
         Body: body,
         ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable",
       })
     );
     return `r2://${this.config.bucketName}/${key}`;
+  }
+
+  async uploadWithDedup(
+    body: Buffer | Uint8Array,
+    contentType: string,
+    ext: string
+  ): Promise<string> {
+    const hash = createHash("sha256").update(body).digest("hex");
+    const key = `dedup/${hash}.${ext.replace(/^\./, "")}`;
+    try {
+      await this.client.send(
+        new HeadObjectCommand({ Bucket: this.config.bucketName, Key: key })
+      );
+      return `r2://${this.config.bucketName}/${key}`;
+    } catch {
+      return this.upload(key, body, contentType);
+    }
   }
 
   async getSignedDownloadUrl(key: string, expiresIn = 3600): Promise<string> {

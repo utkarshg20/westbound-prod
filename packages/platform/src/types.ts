@@ -1,10 +1,15 @@
 import { z } from "zod";
 
-export const ProjectSlugSchema = z.enum([
+export const KNOWN_PROJECT_SLUGS = [
   "studio",
   "sync_factory",
   "youtube_faceless",
-]);
+] as const;
+
+/** Extensible slug shape — new projects via DB insert, no redeploy */
+export const ProjectSlugSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{2,40}$/);
 export type ProjectSlug = z.infer<typeof ProjectSlugSchema>;
 
 export const AssetTypeSchema = z.enum([
@@ -43,16 +48,41 @@ export type TrackSource = z.infer<typeof TrackSourceSchema>;
 export const JobTypeSchema = z.enum([
   "studio.generate_episode",
   "studio.ingest_asset",
+  "studio.trend_hijack",
   "sync.signal_ingest",
   "sync.generate_batch",
   "sync.upload_track",
   "sync.brief_match",
+  "sync.supervisor_outreach",
   "youtube.assemble_video",
   "youtube.publish",
+  "youtube.enqueue_channel_video",
+  "youtube.title_thumb_rotate",
+  "track.multi_route",
+  "dsp.release_candidate",
+  "dsp.compilation_batch",
+  "identifyy.register",
   "agent.continuity_check",
   "agent.metadata_tag",
 ]);
 export type JobType = z.infer<typeof JobTypeSchema>;
+
+export type QueueDomain = "sync" | "studio" | "agent";
+
+export function jobQueueDomain(type: JobType): QueueDomain {
+  if (type.startsWith("sync.")) return "sync";
+  if (type.startsWith("agent.")) return "agent";
+  return "studio";
+}
+
+export const JOB_PRIORITY: Partial<Record<JobType, number>> = {
+  "studio.trend_hijack": 1,
+  "studio.generate_episode": 1,
+  "sync.generate_batch": 5,
+  "track.multi_route": 10,
+  "youtube.assemble_video": 10,
+  "youtube.enqueue_channel_video": 10,
+};
 
 export interface Project {
   id: string;

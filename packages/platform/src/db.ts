@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 import type {
   Asset,
   Character,
@@ -11,6 +12,13 @@ import type {
   Track,
 } from "./types.js";
 import { getSupabaseUrl, loadEnv } from "./config.js";
+import { assertValidStageTransition } from "./fsm.js";
+import {
+  ProductionRunSchema,
+  ProjectSchema,
+  SignalSchema,
+  TrackSchema,
+} from "./entity-schemas.js";
 
 export type Database = {
   public: {
@@ -34,7 +42,7 @@ export class WestboundRepository {
   async listProjects(): Promise<Project[]> {
     const { data, error } = await this.db.from("projects").select("*");
     if (error) throw error;
-    return data as Project[];
+    return z.array(ProjectSchema).parse(data);
   }
 
   async getProductionRun(id: string): Promise<ProductionRun | null> {
@@ -44,7 +52,7 @@ export class WestboundRepository {
       .eq("id", id)
       .maybeSingle();
     if (error) throw error;
-    return data as ProductionRun | null;
+    return data ? ProductionRunSchema.parse(data) : null;
   }
 
   async updateProductionStage(
@@ -52,6 +60,10 @@ export class WestboundRepository {
     stage: ProductionRun["stage"],
     status?: ProductionRun["status"]
   ): Promise<ProductionRun> {
+    const current = await this.getProductionRun(id);
+    if (!current) throw new Error(`Production run not found: ${id}`);
+    assertValidStageTransition(current.stage, stage);
+
     const patch: Record<string, unknown> = {
       stage,
       updated_at: new Date().toISOString(),
@@ -64,17 +76,26 @@ export class WestboundRepository {
       .select()
       .single();
     if (error) throw error;
-    return data as ProductionRun;
+    return ProductionRunSchema.parse(data);
   }
 
-  async listProductionRuns(projectId?: string): Promise<ProductionRun[]> {
-    let q = this.db.from("production_runs").select("*").order("updated_at", {
-      ascending: false,
-    });
+  async listProductionRuns(
+    projectId?: string,
+    pagination?: { limit?: number; cursor?: string }
+  ): Promise<ProductionRun[]> {
+    const limit = pagination?.limit ?? 100;
+    let q = this.db
+      .from("production_runs")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .limit(limit);
     if (projectId) q = q.eq("project_id", projectId);
+    if (pagination?.cursor) {
+      q = q.lt("updated_at", pagination.cursor);
+    }
     const { data, error } = await q;
     if (error) throw error;
-    return data as ProductionRun[];
+    return z.array(ProductionRunSchema).parse(data);
   }
 
   async createAsset(
@@ -123,7 +144,7 @@ export class WestboundRepository {
     if (unprocessedOnly) q = q.is("processed_at", null);
     const { data, error } = await q;
     if (error) throw error;
-    return data as Signal[];
+    return z.array(SignalSchema).parse(data);
   }
 
   async markSignalProcessed(id: string): Promise<void> {
@@ -149,13 +170,59 @@ export class WestboundRepository {
   async listTracks(filters?: {
     source?: Track["source"];
     projectId?: string;
+    limit?: number;
   }): Promise<Track[]> {
     let q = this.db.from("tracks").select("*");
     if (filters?.source) q = q.eq("source", filters.source);
     if (filters?.projectId) q = q.eq("project_id", filters.projectId);
+    const { data, error } = await q.limit(filters?.limit ?? 100);
+    if (error) throw error;
+    return z.array(TrackSchema).parse(data ?? []);
+  }
+
+  async listChannels(projectId?: string) {
+    let q = this.db.from("channels").select("*");
+    if (projectId) q = q.eq("project_id", projectId);
     const { data, error } = await q;
     if (error) throw error;
-    return data as Track[];
+    return data ?? [];
+  }
+
+  async getChannelBySlug(slug: string) {
+    const { data, error } = await this.db
+      .from("channels")
+      .select("*")
+      .eq("slug", slug)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  async listSupervisors() {
+    const { data, error } = await this.db.from("supervisors").select("*");
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  async listDeadLetterJobs(limit = 50) {
+    const { data, error } = await this.db
+      .from("dead_letter_jobs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  async listStoryBeatOverrides(projectId: string, episodeNumber: number) {
+    const { data, error } = await this.db
+      .from("story_beat_overrides")
+      .select("*")
+      .eq("project_id", projectId)
+      .lte("effective_from_episode", episodeNumber)
+      .order("effective_from_episode", { ascending: false });
+    if (error) throw error;
+    return data ?? [];
   }
 
   async listReleases(): Promise<Release[]> {
@@ -185,17 +252,27 @@ export class WestboundRepository {
     return data as StoryBeat[];
   }
 
-  async addJobCost(productionRunId: string, costCents: number): Promise<void> {
-    const run = await this.getProductionRun(productionRunId);
-    if (!run) throw new Error(`Production run not found: ${productionRunId}`);
-    const { error } = await this.db
-      .from("production_runs")
-      .update({
-        cost_cents: run.cost_cents + costCents,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", productionRunId);
-    if (error) throw error;
+  async addJobCost(productionRunId: string, costCents: number): Promise<number> {
+    if (costCents < 0) throw new Error("costCents must be non-negative");
+    if (costCents > 100_000) throw new Error("costCents exceeds sanity bound (100_000)");
+    const { data, error } = await this.db.rpc("add_job_cost", {
+      run_id: productionRunId,
+      delta: costCents,
+    });
+    if (error) {
+      const run = await this.getProductionRun(productionRunId);
+      if (!run) throw new Error(`Production run not found: ${productionRunId}`);
+      const { error: updErr } = await this.db
+        .from("production_runs")
+        .update({
+          cost_cents: run.cost_cents + costCents,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", productionRunId);
+      if (updErr) throw updErr;
+      return run.cost_cents + costCents;
+    }
+    return data as number;
   }
 }
 

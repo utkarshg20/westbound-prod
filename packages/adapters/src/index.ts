@@ -9,3 +9,6 @@ export * from "./elevenlabs.js";
 export * from "./hedra.js";
 export * from "./youtube.js";
 export * from "./songtradr.js";
+export * from "./face.js";
+export * from "./replicate-flux.js";
+export * from "./fetch-hardened.js";

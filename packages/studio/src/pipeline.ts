@@ -5,6 +5,7 @@ import {
   planShots,
   scoreFaceDrift,
 } from "@westbound/agents";
+import { createFaceEmbeddingClient } from "@westbound/adapters";
 import {
   createRepository,
   enqueueJob,
@@ -105,10 +106,35 @@ export class StudioPipeline {
     const script = String(run.metadata.script ?? "");
     const beats = await this.repo.listStoryBeats(run.project_id);
 
-    const continuity = await checkContinuity(llm, script, beats, [
+    const episodeNumber =
+      Number(run.metadata.episodeNumber) ||
+      beats.find((b) => b.id === run.metadata.storyBeatId)?.episode_number ||
+      1;
+    const overrides = await this.repo.listStoryBeatOverrides(
+      run.project_id,
+      episodeNumber
+    );
+    const baseCanon = [
       "Sammy is sober",
       "Band is Sammy Rane and Westbound — four members",
-    ]);
+    ];
+    const canonConstraints = [
+      ...baseCanon.filter(
+        (c) =>
+          !overrides.some(
+            (o: { constraint_replaced: string }) => o.constraint_replaced === c
+          )
+      ),
+      ...overrides.map((o: { new_constraint: string }) => o.new_constraint),
+    ];
+
+    const continuity = await checkContinuity(
+      llm,
+      script,
+      beats,
+      canonConstraints,
+      { productionRunId: runId, episodeNumber }
+    );
 
     if (!continuity.passed) {
       await this.repo.updateProductionStage(runId, "dan_review", "active");
@@ -119,7 +145,8 @@ export class StudioPipeline {
       return (await this.repo.getProductionRun(runId))!;
     }
 
-    const shotPlan = await planShots(llm, script);
+    const shotPlan = await planShots(llm, script, { productionRunId: runId });
+    const faceClient = createFaceEmbeddingClient();
     const characters = await this.repo.listCharacters(run.project_id);
     const sammy = characters.find((c) => c.slug === "sammy_rane");
 
@@ -163,7 +190,12 @@ export class StudioPipeline {
       totalCost += video.costCents ?? 0;
 
       if (shot.hasCharacter) {
-        const qa = scoreFaceDrift([], []);
+        const heroUri = String(sammy?.metadata?.heroUri ?? run.metadata.heroUri ?? "");
+        const qa = await scoreFaceDrift(
+          heroUri || `r2://hero/${sammy?.id ?? "sammy"}`,
+          video.uri,
+          faceClient
+        );
         if (sammy) {
           await this.library.ingest({
             projectSlug: "studio",

@@ -31,7 +31,7 @@ export class AssetLibrary {
   static async create(): Promise<AssetLibrary> {
     let storage: AssetStorage | null = null;
     try {
-      storage = AssetStorage.fromEnv();
+      storage = await AssetStorage.fromEnv();
     } catch {
       storage = null;
     }
