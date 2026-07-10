@@ -21,3 +21,7 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       - run: pnpm lint
+      - run: pnpm health
+        env:
+          USE_STUB_ADAPTERS: "true"
+          REDIS_URL: redis://localhost:6379

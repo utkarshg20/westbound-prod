@@ -68,13 +68,32 @@ export default async function OpsPage() {
         )}
       </section>
 
+      <section style={{ marginBottom: "2rem" }}>
+        <h2 style={{ fontSize: "1rem" }}>Weekly ops ritual (Friday, 1 hr)</h2>
+        <ul style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+          <li>
+            <Link href="/metrics">Metrics</Link> — hard-fail alerts, win rate, DLQ
+          </li>
+          <li>
+            <Link href="/review">Review</Link> — sync, hero, supervisor outreach queues
+          </li>
+          <li>
+            <Link href="/revenue">Revenue</Link> — royalty CSV import, LLC split
+          </li>
+        </ul>
+      </section>
+
       <section>
         <h2 style={{ fontSize: "1rem" }}>n8n automation</h2>
         <ul style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
           <li>sync-signal-ingest.json — daily</li>
           <li>sync-generate-batch.json — after ingest</li>
           <li>sync-brief-match.json — daily</li>
-          <li>youtube-daily.json — daily (set proof14 in payload for 14-day batch)</li>
+          <li>youtube-daily.json — daily (lofi_compounder)</li>
+          <li>youtube-title-thumb-rotate.json — daily CTR swap</li>
+          <li>trend-hijack.json — every 15m (optional)</li>
+          <li>supervisor-outreach.json — monthly</li>
+          <li>dsp-compilation-batch.json — monthly</li>
         </ul>
       </section>
     </>

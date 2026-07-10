@@ -5,7 +5,12 @@ import {
   signalToSunoPrompt,
   tagTrackMetadata,
 } from "@westbound/agents";
-import { createRepository, createSupabaseAdmin } from "@westbound/platform";
+import {
+  createRepository,
+  createSupabaseAdmin,
+  fetchAndUploadToR2,
+  guessContentType,
+} from "@westbound/platform";
 
 export class SyncEngine {
   private readonly repo = createRepository();
@@ -52,18 +57,45 @@ export class SyncEngine {
 
         if (briefScore.discard) continue;
 
+        let assetId: string | null = null;
+        let audioUri = v.uri;
+        try {
+          audioUri = await fetchAndUploadToR2(v.uri, {
+            projectSlug: "sync_factory",
+            entitySlug: `track_${signal.id.slice(0, 8)}`,
+            filename: `${v.id}.wav`,
+            contentType: guessContentType(v.uri, "audio/wav"),
+          });
+          const asset = await this.repo.createAsset({
+            project_id: syncProject.id,
+            character_id: null,
+            parent_id: null,
+            type: "audio",
+            r2_uri: audioUri,
+            version: 1,
+            tool: "suno",
+            prompt_hash: null,
+            qa_status: "pending",
+            tags: meta.mood,
+            metadata: { signalId: signal.id, variantIndex: vi, sourceUri: v.uri },
+          });
+          assetId = asset.id;
+        } catch {
+          /* keep provider uri */
+        }
+
         const track = await this.repo.createTrack({
           project_id: syncProject.id,
           production_run_id: null,
           source: "sync",
           title: meta.description.slice(0, 80),
           isrc: null,
-          asset_id: null,
+          asset_id: assetId,
           mood_tags: meta.mood,
           metadata: {
             ...meta,
             sunoPrompt: suno,
-            audioUri: v.uri,
+            audioUri,
             disclosure: "AI-assisted, human-curated",
             qaStatus: briefScore.holdForDan
               ? "hold_for_dan"
@@ -88,10 +120,15 @@ export class SyncEngine {
   async submitToCurationQueue(trackIds: string[]): Promise<void> {
     const db = createSupabaseAdmin();
     for (const id of trackIds) {
+      const tracks = await this.repo.listTracks({ source: "sync" });
+      const track = tracks.find((t) => t.id === id);
+      if (!track) continue;
+
       await db
         .from("tracks")
         .update({
           metadata: {
+            ...track.metadata,
             qaStatus: "pending_curation",
             curationQueue: true,
           },

@@ -13,9 +13,16 @@
     "worker": "pnpm --filter @westbound/worker dev",
     "dashboard": "pnpm --filter @westbound/dashboard dev",
     "health": "tsx scripts/check-health.ts",
+    "setup:week0": "bash scripts/setup-week0.sh",
     "sync:mvp": "tsx scripts/run-sync-mvp.ts",
     "youtube:proof": "tsx scripts/run-youtube-proof.ts",
-    "ingest:refs": "bash scripts/ingest-dan-refs.sh"
+    "youtube:loops": "tsx scripts/generate-visual-loops.ts",
+    "ingest:refs": "bash scripts/ingest-dan-refs.sh",
+    "trend:scrape": "tsx scripts/trend-scraper.ts",
+    "sammy:dry-runs": "tsx scripts/run-sammy-dry-runs.ts",
+    "vendor:flux": "tsx scripts/vendor-test-flux.ts",
+    "vendor:suno": "tsx scripts/vendor-test-suno.ts",
+    "vendor:video": "tsx scripts/vendor-test-video.ts"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.33.0",

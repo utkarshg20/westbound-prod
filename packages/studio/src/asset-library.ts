@@ -2,6 +2,8 @@ import {
   AssetStorage,
   buildAssetKey,
   createRepository,
+  fetchAndUploadToR2,
+  fetchProviderUri,
   type Asset,
   type AssetType,
 } from "@westbound/platform";
@@ -20,6 +22,7 @@ export interface IngestAssetInput {
   prompt?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  sourceUri?: string;
 }
 
 export class AssetLibrary {
@@ -62,9 +65,24 @@ export class AssetLibrary {
       filename: input.filename,
     });
 
+    let body = input.body;
+    if (input.sourceUri && body.length === 0) {
+      body = await fetchProviderUri(input.sourceUri);
+    }
+
     let r2Uri = `local://${key}`;
     if (this.storage) {
-      r2Uri = await this.storage.upload(key, input.body, input.contentType);
+      if (input.sourceUri && !input.body.length) {
+        r2Uri = await fetchAndUploadToR2(input.sourceUri, {
+          projectSlug: input.projectSlug,
+          entitySlug: input.entitySlug,
+          filename: input.filename,
+          contentType: input.contentType,
+          version,
+        });
+      } else {
+        r2Uri = await this.storage.upload(key, body, input.contentType);
+      }
     }
 
     const promptHash = input.prompt

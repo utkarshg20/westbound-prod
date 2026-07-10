@@ -33,14 +33,16 @@ export class SongtradrPublisher implements Publisher {
   }
 }
 
+/**
+ * Pond5 rejects AI music (vendor-verification NO).
+ * Fail closed so multi-route never silently "succeeds".
+ */
 export class Pond5Publisher implements Publisher {
   readonly platform = "pond5";
 
   async publish(_input: PublishInput): Promise<{ externalId: string; url?: string }> {
-    const externalId = `pond5_${crypto.randomUUID().slice(0, 8)}`;
-    return {
-      externalId,
-      url: undefined,
-    };
+    throw new Error(
+      "Pond5 rejects AI music — do not submit. Use Songtradr / DistroKid instead."
+    );
   }
 }

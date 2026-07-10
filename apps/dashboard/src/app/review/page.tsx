@@ -1,12 +1,62 @@
 import { createServerSupabase } from "@/lib/supabase";
 import { ReviewActions } from "./review-actions";
+import { RefUploadForm } from "./ref-upload-form";
 
 interface QueueItem {
   id: string;
   title: string;
   kind: string;
   tier: string;
-  queue: "sync" | "hero_publish" | "ref_intake";
+  queue: "sync" | "hero_publish" | "supervisor_outreach" | "ref_intake";
+}
+
+const REF_CHECKLIST = [
+  "01_hero_portrait.png",
+  "02_profile_left.png",
+  "03_profile_right.png",
+  "04_wardrobe_a_full.png",
+  "05_wardrobe_b_full.png",
+  "06_wardrobe_c_full.png",
+  "07_loc_indiana.png",
+  "08_loc_bar.png",
+  "09_loc_highway.png",
+  "10_loc_la.png",
+  "11_loc_rehearsal.png",
+  "12_voice_spoken.wav",
+  "13_voice_singing.wav",
+];
+
+async function loadRefIntakeStatus(): Promise<
+  Array<{ filename: string; ingested: boolean }>
+> {
+  const db = createServerSupabase();
+  if (!db) {
+    return REF_CHECKLIST.map((filename) => ({ filename, ingested: false }));
+  }
+
+  const { data: projects } = await db
+    .from("projects")
+    .select("id")
+    .eq("slug", "studio")
+    .limit(1);
+  const projectId = projects?.[0]?.id;
+  if (!projectId) {
+    return REF_CHECKLIST.map((filename) => ({ filename, ingested: false }));
+  }
+
+  const { data: assets } = await db
+    .from("assets")
+    .select("r2_uri, metadata")
+    .eq("project_id", projectId);
+
+  return REF_CHECKLIST.map((filename) => {
+    const ingested = (assets ?? []).some(
+      (a) =>
+        a.r2_uri.includes(filename) ||
+        String((a.metadata as Record<string, unknown>)?.filename ?? "") === filename
+    );
+    return { filename, ingested };
+  });
 }
 
 async function loadQueue(): Promise<QueueItem[]> {
@@ -63,17 +113,38 @@ async function loadQueue(): Promise<QueueItem[]> {
     });
   }
 
+  const { data: outreach } = await db
+    .from("supervisor_outreach")
+    .select("id, email_draft, supervisor_id")
+    .eq("status", "pending_dan_review")
+    .limit(20);
+
+  for (const o of outreach ?? []) {
+    items.push({
+      id: o.id,
+      title: `Outreach draft (${String(o.email_draft).slice(0, 40)}…)`,
+      kind: "email",
+      tier: "volume",
+      queue: "supervisor_outreach",
+    });
+  }
+
   return items;
 }
 
 export default async function ReviewPage() {
-  const items = await loadQueue();
+  const [items, refStatus] = await Promise.all([
+    loadQueue(),
+    loadRefIntakeStatus(),
+  ]);
+  const refDone = refStatus.filter((r) => r.ingested).length;
 
   return (
     <>
       <h1>Review queues</h1>
       <p style={{ color: "var(--muted)", marginBottom: "1.5rem" }}>
-        Dan approves sync tracks and hero publishes before scheduling.
+        Dan approves sync tracks, hero publishes, and supervisor outreach before
+        scheduling.
       </p>
       <table className="table">
         <thead>
@@ -100,10 +171,23 @@ export default async function ReviewPage() {
         </tbody>
       </table>
       <section style={{ marginTop: "2rem" }}>
-        <h2 style={{ fontSize: "1rem" }}>Ref intake (Dan)</h2>
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-          See <code>docs/dan-ref-intake/CHECKLIST.md</code> — upload hero refs
-          before LoRA training.
+        <h2 style={{ fontSize: "1rem" }}>
+          Ref intake (Dan) — {refDone}/{REF_CHECKLIST.length} complete
+        </h2>
+        <ul style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+          {refStatus.map((r) => (
+            <li key={r.filename} style={{ color: r.ingested ? "green" : undefined }}>
+              {r.ingested ? "✓" : "○"} {r.filename}
+            </li>
+          ))}
+        </ul>
+        <p style={{ fontSize: "0.85rem", color: "var(--muted)", marginTop: "0.5rem" }}>
+          Run <code>pnpm ingest:refs</code> after placing files in{" "}
+          <code>docs/dan-ref-intake/</code>, or upload below.
+        </p>
+        <RefUploadForm />
+        <p style={{ fontSize: "0.85rem", marginTop: "0.75rem" }}>
+          <a href="/login">Dan login</a>
         </p>
       </section>
     </>

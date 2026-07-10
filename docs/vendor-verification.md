@@ -19,29 +19,32 @@
 | Item | Status | Notes |
 |------|--------|-------|
 | Official API | **GO** | Replaces Midjourney (no official API in 2026). ~$0.04/image. |
-| Env | `REPLICATE_API_TOKEN` | Wire in `packages/adapters/src/replicate-flux.ts` |
+| Env | `REPLICATE_API_TOKEN` | Wired in `packages/adapters/src/replicate-flux-image.ts` + registry |
+| Test batch | **READY** | Run `REPLICATE_API_TOKEN=... npx tsx scripts/vendor-test-flux.ts` (20 images) |
 
-**Action:** Run 20-image test batch before Week 7 YouTube factory.
+**Engineering:** `ReplicateFluxImageGenerator` active when `USE_STUB_ADAPTERS=false` and token set.
 
 ## Suno (third-party API)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| PiAPI / AIMLAPI | **VERIFY** | Test 5 generations; confirm commercial license for DistroKid. |
-| Env | `SUNO_API_KEY` or provider-specific | Existing `packages/adapters/src/suno.ts` |
+| PiAPI / AIMLAPI | **VERIFY** | Run `npx tsx scripts/vendor-test-suno.ts` (5 generations) before DistroKid |
+| Env | `SUNO_API_KEY` | `packages/adapters/src/suno.ts` with hardened fetch |
 | RIAA litigation risk | **MONITOR** | Backup: Udio adapter stub. Document prompts + human edits for copyright. |
 
-**Engineering default:** Suno adapter with retry/timeout (B5 template).
+**Engineering default:** Suno adapter with retry/timeout; media bytes land in R2 via `packages/platform/src/media-fetch.ts`.
 
 ## Video — Seedance 2.0 Fast vs Kling 3.0 vs Veo
 
-| Provider | Cost (approx) | Use case |
-|----------|---------------|----------|
-| Seedance 2.0 Fast | ~$0.09/sec | Default B-roll |
-| Kling 3.0 | Per Kling pricing | Character motion |
-| Veo 3 | ~$0.75/sec | Hero establishing only |
+| Provider | Cost (approx) | Use case | Engineering default |
+|----------|---------------|----------|---------------------|
+| Seedance 2.0 Fast | ~$0.09/sec | Default B-roll | Pending $30 test |
+| Kling 3.0 | Per Kling pricing | Character motion | **Default dialogue** in shot router |
+| Veo 3 | ~$0.75/sec | Hero establishing only | Stub until keyed |
 
-**Action:** $30 side-by-side test before locking defaults in `youtube-factory.ts`.
+**Action:** Run side-by-side test via `scripts/vendor-test-video.ts` before changing `youtube-factory.ts` defaults.
+
+**Interim decision (July 2026):** Kling for dialogue, Seedance for volume B-roll (post-test), Veo hero-only.
 
 ## YouTube — AI / mass-produced content (May 2026)
 

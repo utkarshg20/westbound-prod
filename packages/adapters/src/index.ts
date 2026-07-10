@@ -12,3 +12,8 @@ export * from "./songtradr.js";
 export * from "./face.js";
 export * from "./replicate-flux.js";
 export * from "./fetch-hardened.js";
+export * from "./distrokid.js";
+export * from "./replicate-flux-image.js";
+export * from "./seedance.js";
+export * from "./udio.js";
+export * from "./youtube-analytics.js";

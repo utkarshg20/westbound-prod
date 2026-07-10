@@ -8,6 +8,19 @@ docker compose up redis n8n -d
 
 Open http://localhost:5678 and import workflows from `workflows/`.
 
+## Workflows
+
+| File | Schedule | Job |
+|------|----------|-----|
+| `sync-signal-ingest.json` | daily | `sync.signal_ingest` |
+| `sync-generate-batch.json` | after ingest | `sync.generate_batch` |
+| `sync-brief-match.json` | daily | `sync.brief_match` |
+| `youtube-daily.json` | daily | `youtube.assemble_video` (`lofi_compounder`) |
+| `youtube-title-thumb-rotate.json` | daily | `youtube.title_thumb_rotate` |
+| `trend-hijack.json` | every 15m | runs `scripts/trend-scraper.ts` |
+| `supervisor-outreach.json` | monthly | `sync.supervisor_outreach` |
+| `dsp-compilation-batch.json` | monthly | `dsp.compilation_batch` |
+
 ## Production VPS (Hetzner / DigitalOcean)
 
 1. Provision Ubuntu 22.04, 4GB+ RAM.

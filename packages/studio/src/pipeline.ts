@@ -9,6 +9,8 @@ import { createFaceEmbeddingClient } from "@westbound/adapters";
 import {
   createRepository,
   enqueueJob,
+  fetchProviderUri,
+  guessContentType,
   type ProductionRun,
   type ProductionStage,
 } from "@westbound/platform";
@@ -160,17 +162,19 @@ export class StudioPipeline {
     for (const v of songVariations) {
       totalCost += v.costCents ?? 0;
       if (sammy) {
+        const audioBody = await fetchProviderUri(v.uri);
         await this.library.ingest({
           projectSlug: "studio",
           entitySlug: "sammy_rane",
           characterId: sammy.id,
           type: "audio",
           filename: `${v.id}.wav`,
-          body: Buffer.from(""),
-          contentType: "audio/wav",
+          body: audioBody,
+          contentType: guessContentType(v.uri, "audio/wav"),
           tool: "suno",
           tags: ["song", "draft"],
           metadata: { variationId: v.id, uri: v.uri },
+          sourceUri: v.uri,
         });
       }
     }
@@ -197,17 +201,19 @@ export class StudioPipeline {
           faceClient
         );
         if (sammy) {
+          const videoBody = await fetchProviderUri(video.uri);
           await this.library.ingest({
             projectSlug: "studio",
             entitySlug: "sammy_rane",
             characterId: sammy.id,
             type: "video",
             filename: `shot_${shot.index}.mp4`,
-            body: Buffer.from(""),
-            contentType: "video/mp4",
+            body: videoBody,
+            contentType: guessContentType(video.uri, "video/mp4"),
             tool: provider.name,
             tags: ["episode", shot.shotType, qa.flagged ? "qa_flagged" : "qa_ok"],
             metadata: { shot, driftScore: qa.driftScore, uri: video.uri },
+            sourceUri: video.uri,
           });
         }
       }
@@ -269,11 +275,14 @@ export class StudioPipeline {
 
     const { createDspRelease, getReleaseChecklist } = await import("@westbound/dsp");
     const trackId = run.metadata.trackId as string | undefined;
+    const disclosure =
+      String(run.metadata.disclosure ?? "AI-assisted, human-curated");
     if (trackId) {
       await createDspRelease(
         runId,
         trackId,
-        new Date(String(run.metadata.scheduledAt ?? Date.now()))
+        new Date(String(run.metadata.scheduledAt ?? Date.now())),
+        disclosure
       );
     }
     const metadata = {
@@ -294,5 +303,21 @@ export class StudioPipeline {
 
   getStageOrder(): ProductionStage[] {
     return [...STAGES];
+  }
+
+  async renderShorts(runId: string, templateId: string): Promise<void> {
+    const run = await this.repo.getProductionRun(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+    if (!this.adapters.creatomate) {
+      throw new Error("Creatomate not configured");
+    }
+    await this.adapters.creatomate.render({
+      templateId,
+      modifications: {
+        master_uri: String(run.metadata.resolveMasterUri ?? ""),
+        formats: ["9:16", "9:16"],
+        title: run.title,
+      },
+    });
   }
 }

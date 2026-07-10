@@ -1,0 +1,42 @@
+{
+  "name": "dsp-compilation-batch",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 10 1 * *" }]
+        }
+      },
+      "name": "Monthly 1st 10am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_API_URL}}/api/jobs/enqueue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{$env.N8N_WEBHOOK_SECRET}}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "type", "value": "dsp.compilation_batch" },
+            { "name": "payload", "value": "{}" }
+          ]
+        }
+      },
+      "name": "Enqueue compilation",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Monthly 1st 10am": {
+      "main": [[{ "node": "Enqueue compilation", "type": "main", "index": 0 }]]
+    }
+  }
+}

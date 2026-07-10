@@ -54,7 +54,14 @@ export async function ingestDailySignals(): Promise<number> {
   if (process.env.SIGNAL_CSV_PATH) {
     const { importSignalsFromCsv } = await import("./signal-import.js");
     const imported = await importSignalsFromCsv(process.env.SIGNAL_CSV_PATH);
-    return imported.length;
+    if (imported.length > 0) return imported.length;
+  }
+
+  const { scrapeAllSignalSources } = await import("./scrapers/run-scrapers.js");
+  const scraped = await scrapeAllSignalSources();
+  if (scraped.length > 0) {
+    const created = await ingestSignals(scraped);
+    return created.length;
   }
 
   const samples: RawSignalInput[] = [

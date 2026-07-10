@@ -23,7 +23,7 @@
         "bodyParameters": {
           "parameters": [
             { "name": "type", "value": "youtube.assemble_video" },
-            { "name": "payload", "value": "={{ JSON.stringify({ channelSlug: 'lofi' }) }}" }
+            { "name": "payload", "value": "={{ JSON.stringify({ channelSlug: 'lofi_compounder' }) }}" }
           ]
         }
       },

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@westbound/adapters": "workspace:*",
     "@westbound/agents": "workspace:*",
     "@westbound/platform": "workspace:*",
     "@westbound/studio": "workspace:*",

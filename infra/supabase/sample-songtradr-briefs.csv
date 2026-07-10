@@ -1,0 +1,3 @@
+brief_id,mood,genre,bpm_min,bpm_max,description,must_not,sounds_like
+br_001,tense,cinematic,80,100,Documentary trailer underscore,vocals;edm,Hans Zimmer;light
+br_002,calm,lofi,70,90,Study focus instrumental,vocals;heavy drums,Chillhop;study

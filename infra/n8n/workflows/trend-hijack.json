@@ -1,0 +1,24 @@
+{
+  "name": "trend-hijack",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] }
+      },
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "command": "cd /app && npx tsx scripts/trend-scraper.ts"
+      },
+      "name": "Run trend scraper",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": { "main": [[{ "node": "Run trend scraper", "type": "main", "index": 0 }]] }
+  }
+}

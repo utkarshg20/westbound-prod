@@ -10,7 +10,8 @@ export interface DspReleaseChecklist {
 export async function createDspRelease(
   productionRunId: string,
   trackId: string,
-  scheduledAt: Date
+  scheduledAt: Date,
+  ddexAiDisclosure = "AI-assisted, human-curated"
 ): Promise<void> {
   const db = createSupabaseAdmin();
   await db.from("releases").insert({
@@ -19,6 +20,8 @@ export async function createDspRelease(
     scheduled_at: scheduledAt.toISOString(),
     platforms: ["spotify", "apple", "youtube_music", "tidal", "amazon"],
     stage: "scheduled",
+    ddex_ai_disclosure: ddexAiDisclosure,
+    metadata: { disclosure: ddexAiDisclosure },
   });
 }
 
@@ -29,6 +32,29 @@ export function getReleaseChecklist(): DspReleaseChecklist {
     identifyy: false,
     spotifyEditorialPitch: false,
   };
+}
+
+export async function publishReleaseCandidate(
+  runId: string,
+  trackId: string
+): Promise<void> {
+  await createDspRelease(runId, trackId, new Date());
+
+  const apiKey = process.env.DISTROKID_API_KEY;
+  if (!apiKey) return;
+
+  const { DistroKidPublisher } = await import("@westbound/adapters");
+  const db = createSupabaseAdmin();
+  const { data: track } = await db.from("tracks").select("*").eq("id", trackId).single();
+  if (!track) return;
+
+  const publisher = new DistroKidPublisher(apiKey);
+  await publisher.publish({
+    title: track.title,
+    description: String(track.metadata?.description ?? ""),
+    mediaUri: String(track.metadata?.audioUri ?? ""),
+    ddexAiDisclosure: "AI-assisted, human-curated",
+  });
 }
 
 export async function markChecklistItem(

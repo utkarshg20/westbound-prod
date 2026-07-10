@@ -69,6 +69,9 @@ importers:
       '@sentry/node':
         specifier: ^9.30.0
         version: 9.47.1
+      '@westbound/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@westbound/agents':
         specifier: workspace:*
         version: link:../../packages/agents
@@ -138,6 +141,9 @@ importers:
 
   packages/dsp:
     dependencies:
+      '@westbound/adapters':
+        specifier: workspace:*
+        version: link:../adapters
       '@westbound/platform':
         specifier: workspace:*
         version: link:../platform

@@ -49,6 +49,7 @@ export const JobTypeSchema = z.enum([
   "studio.generate_episode",
   "studio.ingest_asset",
   "studio.trend_hijack",
+  "studio.render_shorts",
   "sync.signal_ingest",
   "sync.generate_batch",
   "sync.upload_track",

@@ -6,3 +6,4 @@ export * from "./queue.js";
 export * from "./logging.js";
 export * from "./fsm.js";
 export * from "./entity-schemas.js";
+export * from "./media-fetch.js";

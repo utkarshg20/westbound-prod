@@ -1,0 +1,43 @@
+{
+  "name": "youtube-title-thumb-rotate",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] }
+      },
+      "name": "Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WORKER_API_URL}}/api/jobs/enqueue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-n8n-secret", "value": "={{$env.N8N_WEBHOOK_SECRET}}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "type", "value": "youtube.title_thumb_rotate" },
+            {
+              "name": "payload",
+              "value": "={{ JSON.stringify({ videoId: $env.YT_ROTATE_VIDEO_ID }) }}"
+            }
+          ]
+        }
+      },
+      "name": "Enqueue rotate",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    }
+  ],
+  "connections": {
+    "Daily": {
+      "main": [[{ "node": "Enqueue rotate", "type": "main", "index": 0 }]]
+    }
+  }
+}

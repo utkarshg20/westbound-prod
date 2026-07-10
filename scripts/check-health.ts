@@ -33,20 +33,31 @@ async function main() {
     const redis = new Redis(env.REDIS_URL, {
       maxRetriesPerRequest: 1,
       connectTimeout: 3000,
+      retryStrategy: () => null,
     });
     try {
       await redis.ping();
       results.redis = "ok";
     } catch (e) {
-      results.redis = `error: ${e}`;
+      const msg = String(e);
+      results.redis =
+        msg.includes("ECONNREFUSED") || msg.includes("Connection is closed")
+          ? "not reachable (start redis or set REDIS_URL)"
+          : `error: ${msg}`;
     } finally {
-      redis.disconnect();
+      try {
+        redis.disconnect();
+      } catch {
+        /* ignore */
+      }
     }
   } else {
     results.redis = "not configured";
   }
 
   results.r2 = infra.r2 ? "configured" : "not configured";
+  results.sentry = process.env.SENTRY_DSN ? "configured" : "not configured";
+  results.replicate = process.env.REPLICATE_API_TOKEN ? "configured" : "not configured";
 
   const workerUrl = env.WORKER_API_URL ?? "http://localhost:3001";
   try {
@@ -57,7 +68,9 @@ async function main() {
   }
 
   console.log(JSON.stringify({ infra, results }, null, 2));
-  const failed = Object.values(results).some((v) => v.startsWith("error"));
+  const failed = Object.entries(results).some(
+    ([, v]) => v.startsWith("error:") || v.startsWith("error ")
+  );
   process.exit(failed ? 1 : 0);
 }
 

@@ -4,6 +4,8 @@ export interface VerticalSliceOptions {
   /** Stop at dan_review — no auto publish (default true for production) */
   requireDanApproval?: boolean;
   episodeNumber?: number;
+  /** Enqueue Creatomate shorts job after assets_ready */
+  enqueueShorts?: boolean;
 }
 
 /**
@@ -34,6 +36,16 @@ export async function runVerticalSlice(
 
   await pipeline.runEpisodeGeneration(run.id);
   stages.push("generating", "assets_ready");
+
+  if (options.enqueueShorts !== false && process.env.CREATOMATE_TEMPLATE_SHORTS) {
+    const { enqueueJob } = await import("@westbound/platform");
+    await enqueueJob(
+      "studio.render_shorts",
+      { runId: run.id, templateId: process.env.CREATOMATE_TEMPLATE_SHORTS },
+      { productionRunId: run.id }
+    );
+    stages.push("shorts_enqueued");
+  }
 
   await pipeline.submitForReview(run.id);
   stages.push("dan_review");

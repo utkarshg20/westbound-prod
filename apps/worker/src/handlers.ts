@@ -86,6 +86,19 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
       await enqueueChannelVideo(channelSlug, topic);
       logger.info("Trend hijack video enqueued", { topic, channelSlug });
     },
+    "studio.render_shorts": async (job) => {
+      const runId = String(job.data.payload.runId ?? job.data.productionRunId);
+      const templateId = String(
+        job.data.payload.templateId ?? process.env.CREATOMATE_TEMPLATE_SHORTS ?? ""
+      );
+      if (!templateId) {
+        logger.warn("studio.render_shorts: CREATOMATE_TEMPLATE_SHORTS not set");
+        return;
+      }
+      const pipeline = await StudioPipeline.create();
+      await pipeline.renderShorts(runId, templateId);
+      logger.info("Creatomate shorts render complete", { runId, templateId });
+    },
     "studio.ingest_asset": async (job) => {
       const library = await AssetLibrary.create();
       const p = job.data.payload as {
@@ -131,34 +144,175 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
       );
     },
     "youtube.title_thumb_rotate": async (job) => {
-      logger.info("Title/thumb rotation cron", {
-        videoId: job.data.payload.videoId,
+      const videoId = String(job.data.payload.videoId ?? "");
+      if (!videoId) {
+        logger.warn("title_thumb_rotate: videoId required");
+        return;
+      }
+      const db = createSupabaseAdmin();
+      const { data: variants } = await db
+        .from("title_variants")
+        .select("*")
+        .eq("video_id", videoId)
+        .is("retired_at", null);
+
+      if (!variants || variants.length < 2) {
+        logger.info("Title/thumb rotation: need 2+ variants", { videoId });
+        return;
+      }
+
+      const { createYouTubeAnalyticsClient } = await import("@westbound/adapters");
+      const analytics = createYouTubeAnalyticsClient();
+      const { data: ytVideo } = await db
+        .from("youtube_videos")
+        .select("youtube_video_id")
+        .eq("id", videoId)
+        .single();
+      const ytId = String(ytVideo?.youtube_video_id ?? videoId);
+      const samples = await analytics.sampleTitleCtr(
+        ytId,
+        variants.map((v) => String(v.text))
+      );
+
+      for (const sample of samples) {
+        const match = variants.find((v) => v.text === sample.title);
+        if (match) {
+          await db
+            .from("title_variants")
+            .update({ ctr_observed: sample.ctr })
+            .eq("id", match.id);
+        }
+      }
+
+      const { data: ranked } = await db
+        .from("title_variants")
+        .select("*")
+        .eq("video_id", videoId)
+        .is("retired_at", null)
+        .order("ctr_observed", { ascending: false })
+        .limit(2);
+
+      if (!ranked || ranked.length < 2) return;
+
+      const winner = ranked[0]!;
+      const loser = ranked[1]!;
+      await db
+        .from("title_variants")
+        .update({ retired_at: new Date().toISOString() })
+        .eq("id", loser.id);
+      await db
+        .from("title_variants")
+        .update({ deployed_at: new Date().toISOString() })
+        .eq("id", winner.id);
+      await db
+        .from("youtube_videos")
+        .update({
+          title: winner.text,
+          metadata: { winningVariantId: winner.id, ctr: winner.ctr_observed },
+        })
+        .eq("id", videoId);
+
+      logger.info("Title rotation applied", {
+        videoId,
+        winner: winner.text,
+        ctr: winner.ctr_observed,
       });
     },
     "track.multi_route": async (job) => {
       await routeTrackToEngines(String(job.data.payload.trackId));
     },
     "dsp.release_candidate": async (job) => {
-      const { createDspRelease } = await import("@westbound/dsp");
+      const { publishReleaseCandidate } = await import("@westbound/dsp");
       const trackId = String(job.data.payload.trackId);
-      await createDspRelease(
-        String(job.data.productionRunId ?? crypto.randomUUID()),
-        trackId,
-        new Date()
-      );
-      logger.info("DSP release candidate", { trackId });
+      const runId = String(job.data.productionRunId ?? crypto.randomUUID());
+      await publishReleaseCandidate(runId, trackId);
+      logger.info("DSP release candidate", { trackId, runId });
     },
-    "dsp.compilation_batch": async (job) => {
-      logger.info("DSP compilation batch queued", { trackId: job.data.payload.trackId });
+    "dsp.compilation_batch": async () => {
+      const { runCompilationBatch } = await import("@westbound/dsp");
+      const ids = await runCompilationBatch(
+        Number(process.env.COMPILATION_BATCH_LIMIT ?? 10)
+      );
+      logger.info("DSP compilation batch complete", { count: ids.length });
     },
     "identifyy.register": async (job) => {
-      logger.info("Identifyy registration queued", { trackId: job.data.payload.trackId });
+      const { registerIdentifyyContentId } = await import("@westbound/dsp");
+      const trackId = String(job.data.payload.trackId);
+      const result = await registerIdentifyyContentId(trackId);
+      logger.info("Identifyy registration complete", {
+        trackId: result.trackId,
+        registered: result.registered,
+        externalId: result.externalId,
+      });
     },
-    "agent.continuity_check": async () => {
-      logger.info("Continuity check runs inline in studio.generate_episode");
+    "agent.continuity_check": async (job) => {
+      const { createLlmClient, checkContinuity } = await import("@westbound/agents");
+      const { createRepository } = await import("@westbound/platform");
+      const runId = String(job.data.payload.runId ?? job.data.productionRunId ?? "");
+      const script = String(job.data.payload.script ?? "");
+      if (!runId || !script) {
+        logger.warn("agent.continuity_check: runId + script required");
+        return;
+      }
+      const repo = createRepository();
+      const run = await repo.getProductionRun(runId);
+      if (!run) throw new Error(`Run not found: ${runId}`);
+      const beats = await repo.listStoryBeats(run.project_id);
+      const llm = await createLlmClient();
+      const result = await checkContinuity(
+        llm,
+        script,
+        beats,
+        (job.data.payload.canonConstraints as string[]) ?? [
+          "Sammy is sober",
+          "Band is Sammy Rane and Westbound — four members",
+        ],
+        { productionRunId: runId }
+      );
+      await createSupabaseAdmin()
+        .from("production_runs")
+        .update({
+          metadata: { ...run.metadata, continuity: result },
+          stage: result.passed ? run.stage : "dan_review",
+        })
+        .eq("id", runId);
+      logger.info("Continuity check complete", {
+        runId,
+        passed: result.passed,
+        flags: result.flags,
+      });
     },
-    "agent.metadata_tag": async () => {
-      logger.info("Metadata tag runs inline in sync.generate_batch");
+    "agent.metadata_tag": async (job) => {
+      const { createLlmClient, tagTrackMetadata } = await import("@westbound/agents");
+      const trackId = String(job.data.payload.trackId ?? "");
+      const title = String(job.data.payload.title ?? "Untitled");
+      const sunoPrompt = String(job.data.payload.sunoPrompt ?? "");
+      if (!trackId) {
+        logger.warn("agent.metadata_tag: trackId required");
+        return;
+      }
+      const llm = await createLlmClient();
+      const meta = await tagTrackMetadata(llm, title, sunoPrompt, {
+        productionRunId: job.data.productionRunId,
+      });
+      if (!meta) {
+        logger.warn("agent.metadata_tag: schema failure", { trackId });
+        return;
+      }
+      const db = createSupabaseAdmin();
+      const { data: track } = await db
+        .from("tracks")
+        .select("metadata")
+        .eq("id", trackId)
+        .single();
+      await db
+        .from("tracks")
+        .update({
+          mood_tags: meta.mood,
+          metadata: { ...(track?.metadata as object), ...meta },
+        })
+        .eq("id", trackId);
+      logger.info("Metadata tag complete", { trackId, genre: meta.genre });
     },
   };
 

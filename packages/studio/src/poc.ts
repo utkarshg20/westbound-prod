@@ -1,4 +1,5 @@
 import { createAdapterRegistry } from "@westbound/adapters";
+import { fetchProviderUri, guessContentType } from "@westbound/platform";
 import { AssetLibrary } from "./asset-library.js";
 
 export interface PocResult {
@@ -9,8 +10,8 @@ export interface PocResult {
 }
 
 /**
- * Studio POC spikes — LoRA/ComfyUI, Kling, ElevenLabs+Hedra, Suno Persona.
- * Uses stub adapters when API keys absent; records assets in library when DB configured.
+ * Studio POC spikes — LoRA/Flux, Kling, ElevenLabs+Hedra, Suno Persona.
+ * Fetches real media bytes when provider URIs are http(s).
  */
 export async function runStudioPoc(): Promise<PocResult[]> {
   const results: PocResult[] = [];
@@ -22,25 +23,26 @@ export async function runStudioPoc(): Promise<PocResult[]> {
     library = null;
   }
 
-  // 1. LoRA + ComfyUI (stub image batch = 10 stills)
   for (let i = 0; i < 10; i++) {
-    await adapters.image.generate({
+    const img = await adapters.image.generate({
       prompt: `Sammy Rane hero still ${i}, dim bar, neon edge, LoRA locked, denim flannel`,
       loraVersion: "sammy_lora_v1",
       characterId: "sammy_rane",
     });
     if (library && i === 0) {
       try {
+        const body = await fetchProviderUri(img.uri);
         const asset = await library.ingest({
           projectSlug: "studio",
           entitySlug: "sammy_rane",
           type: "image",
           filename: `poc_still_${i}.png`,
-          body: Buffer.from(""),
-          contentType: "image/png",
-          tool: "comfyui",
+          body,
+          contentType: guessContentType(img.uri, "image/png"),
+          tool: adapters.image.name,
           prompt: `still ${i}`,
           tags: ["poc", "lora", "hero_ref"],
+          sourceUri: img.uri,
         });
         results.push({
           step: "lora_comfyui",
@@ -52,7 +54,7 @@ export async function runStudioPoc(): Promise<PocResult[]> {
         results.push({
           step: "lora_comfyui",
           success: true,
-          notes: `Generated stub still ${i}; DB ingest skipped: ${e}`,
+          notes: `Generated still ${i}; ingest skipped: ${e}`,
         });
       }
     }
@@ -61,11 +63,10 @@ export async function runStudioPoc(): Promise<PocResult[]> {
     results.push({
       step: "lora_comfyui",
       success: true,
-      notes: "10 stub stills generated (ComfyUI path documented in docs/studio-poc.md)",
+      notes: "10 stills generated (ComfyUI/Flux path in docs/studio-poc.md)",
     });
   }
 
-  // 2. Kling Character ID clip
   const kling = adapters.videoRouter.pickProvider({
     script: "",
     shotType: "dialogue",
@@ -83,7 +84,6 @@ export async function runStudioPoc(): Promise<PocResult[]> {
     notes: `Clip URI: ${clip.uri}`,
   });
 
-  // 3. ElevenLabs + Hedra
   const voice = await adapters.voice.generate({
     text: "I didn't leave the noise.",
     characterId: "sammy_rane",
@@ -99,7 +99,6 @@ export async function runStudioPoc(): Promise<PocResult[]> {
     notes: `Voice + lip-sync: ${lipsync.uri}`,
   });
 
-  // 4. Suno Persona track
   const tracks = await adapters.music.generate({
     prompt: "Post-grunge anthem, Sammy persona, raw vocal",
     personaId: "sammy_persona_v1",

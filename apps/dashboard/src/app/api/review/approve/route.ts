@@ -9,19 +9,49 @@ export async function POST(req: Request) {
   }
 
   if (body.queue === "sync") {
+    const { data: track } = await db
+      .from("tracks")
+      .select("metadata")
+      .eq("id", body.itemId)
+      .single();
+    const meta = (track?.metadata as Record<string, unknown>) ?? {};
     await db
       .from("tracks")
       .update({
-        metadata: { qaStatus: "approved", curationQueue: false },
+        metadata: { ...meta, qaStatus: "approved", curationQueue: false },
       })
       .eq("id", body.itemId);
+
+    const workerUrl = process.env.WORKER_API_URL ?? "http://localhost:3001";
+    const secret = process.env.N8N_WEBHOOK_SECRET;
+    try {
+      await fetch(`${workerUrl}/api/jobs/enqueue`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(secret ? { "x-n8n-secret": secret } : {}),
+        },
+        body: JSON.stringify({
+          type: "sync.upload_track",
+          payload: { trackIds: [body.itemId] },
+        }),
+      });
+    } catch {
+      /* worker may be offline */
+    }
   } else if (body.queue === "hero_publish") {
+    const { data: run } = await db
+      .from("production_runs")
+      .select("metadata")
+      .eq("id", body.itemId)
+      .single();
+    const meta = (run?.metadata as Record<string, unknown>) ?? {};
     const scheduled = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await db
       .from("production_runs")
       .update({
         stage: "scheduled",
-        metadata: { scheduledAt: scheduled },
+        metadata: { ...meta, scheduledAt: scheduled },
       })
       .eq("id", body.itemId);
 
@@ -41,8 +71,13 @@ export async function POST(req: Request) {
         }),
       });
     } catch {
-      /* worker may be offline; stage still updated */
+      /* worker may be offline */
     }
+  } else if (body.queue === "supervisor_outreach") {
+    await db
+      .from("supervisor_outreach")
+      .update({ status: "approved_for_send", sent_at: null })
+      .eq("id", body.itemId);
   }
 
   return NextResponse.json({ ok: true });

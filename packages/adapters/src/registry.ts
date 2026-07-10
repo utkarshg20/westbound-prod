@@ -12,7 +12,12 @@ import { HedraLipSyncProvider } from "./hedra.js";
 import { KlingVideoGenerator } from "./kling.js";
 import { RuleBasedVideoRouter } from "./router.js";
 import { Pond5Publisher, SongtradrPublisher } from "./songtradr.js";
+import { DistroKidPublisher } from "./distrokid.js";
+import { ReplicateFluxClient } from "./replicate-flux.js";
+import { ReplicateFluxImageGenerator } from "./replicate-flux-image.js";
+import { SeedanceVideoGenerator } from "./seedance.js";
 import { SunoMusicGenerator } from "./suno.js";
+import { UdioMusicGenerator } from "./udio.js";
 import {
   StubImageGenerator,
   StubLipSyncProvider,
@@ -65,20 +70,27 @@ export function createAdapterRegistry(): AdapterRegistry {
     : new StubVideoGenerator("kling");
 
   const veo = new StubVideoGenerator("veo");
-  const runway = new StubVideoGenerator("runway");
+  const seedanceKey = process.env.SEEDANCE_API_KEY;
+  const broll = seedanceKey
+    ? new SeedanceVideoGenerator(seedanceKey)
+    : new StubVideoGenerator("seedance");
 
   const videoRouter = new RuleBasedVideoRouter({
     dialogue: kling,
     establishing: veo,
-    broll: runway,
+    broll,
   });
 
-  const music = env.SUNO_API_KEY
-    ? new SunoMusicGenerator(
-        env.SUNO_API_KEY,
-        env.SUNO_API_BASE ?? "https://api.suno.ai"
-      )
-    : new StubMusicGenerator();
+  const musicProvider = (process.env.MUSIC_PROVIDER ?? "suno").toLowerCase();
+  const music =
+    musicProvider === "udio" && process.env.UDIO_API_KEY
+      ? new UdioMusicGenerator(process.env.UDIO_API_KEY)
+      : env.SUNO_API_KEY
+        ? new SunoMusicGenerator(
+            env.SUNO_API_KEY,
+            env.SUNO_API_BASE ?? "https://api.suno.ai"
+          )
+        : new StubMusicGenerator();
 
   const voice =
     env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID
@@ -118,8 +130,19 @@ export function createAdapterRegistry(): AdapterRegistry {
     );
   }
 
+  if (env.DISTROKID_API_KEY) {
+    publishers.distrokid = new DistroKidPublisher(env.DISTROKID_API_KEY);
+  }
+
+  const image =
+    process.env.REPLICATE_API_TOKEN
+      ? new ReplicateFluxImageGenerator(
+          new ReplicateFluxClient(process.env.REPLICATE_API_TOKEN)
+        )
+      : new StubImageGenerator();
+
   return {
-    image: new StubImageGenerator(),
+    image,
     music,
     voice,
     lipSync,
