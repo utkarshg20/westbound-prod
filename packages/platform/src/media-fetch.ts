@@ -12,7 +12,10 @@ const CONTENT_TYPE_EXT: Record<string, string> = {
 
 /** Download bytes from http(s), r2://, or stub:// URIs */
 export async function fetchProviderUri(uri: string): Promise<Buffer> {
-  if (!uri || uri.startsWith("stub://") || uri.startsWith("local://")) {
+  if (!uri.trim()) {
+    throw new Error("Missing media URI");
+  }
+  if (uri.startsWith("stub://") || uri.startsWith("local://")) {
     return Buffer.from(`stub-content:${uri}`);
   }
 
@@ -30,8 +33,8 @@ export async function fetchProviderUri(uri: string): Promise<Buffer> {
       if (!res.ok) throw new Error(`R2 download ${res.status}`);
       return Buffer.from(await res.arrayBuffer());
     } catch (e) {
-      logger.warn("R2 fetch failed, using stub buffer", { uri, error: String(e) });
-      return Buffer.from(`stub-r2:${uri}`);
+      logger.warn("R2 fetch failed", { uri, error: String(e) });
+      throw e;
     }
   }
 
@@ -43,7 +46,7 @@ export async function fetchProviderUri(uri: string): Promise<Buffer> {
     return Buffer.from(await res.arrayBuffer());
   }
 
-  return Buffer.from(`unknown-uri:${uri}`);
+  throw new Error("Unsupported media URI scheme");
 }
 
 export interface UploadMediaOptions {
@@ -75,9 +78,14 @@ export async function fetchAndUploadToR2(
       version,
       filename,
     });
-    return storage.upload(key, body, options.contentType);
-  } catch {
-    return `local://${options.projectSlug}/${options.entitySlug}/v${version}/${filename}`;
+    return await storage.upload(key, body, options.contentType);
+  } catch (error) {
+    // Explicit demo inputs may remain local. A real provider's output must
+    // never be recorded as stored when the R2 upload failed.
+    if (sourceUri.startsWith("stub://") || sourceUri.startsWith("local://")) {
+      return `local://${options.projectSlug}/${options.entitySlug}/v${version}/${filename}`;
+    }
+    throw error;
   }
 }
 
