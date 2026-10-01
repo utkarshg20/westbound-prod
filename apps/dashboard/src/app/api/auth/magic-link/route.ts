@@ -1,33 +1,30 @@
-import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse, type NextRequest } from "next/server";
+import { appOrigin, createLinkSender, isSameOrigin, loginRedirect, loginUnavailable, noStore } from "../../../../lib/review-auth";
 
-/** Scaffold: send Supabase magic link when Auth is configured */
-export async function POST(req: Request) {
-  const form = await req.formData();
-  const email = String(form.get("email") ?? "");
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-
-  if (!url || !anon || !email) {
-    return NextResponse.redirect(
-      new URL("/login?error=not_configured", appUrl),
-      { status: 303 }
-    );
+export async function POST(req: NextRequest) {
+  try {
+    if (!isSameOrigin(req)) {
+      return noStore(NextResponse.json({ error: "Same-origin request required" }, { status: 403 }));
+    }
+    const form = await req.formData();
+    const email = String(form.get("email") ?? "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+      return loginRedirect("error=invalid_email");
+    }
+    const client = createLinkSender();
+    const emailRedirectTo = `${appOrigin()}/auth/confirm`;
+    const receipt = loginRedirect("sent=1");
+    try {
+      await client.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: false, emailRedirectTo },
+      });
+    } catch {
+      // Provider failures can depend on whether an account was found.
+      // Keep thrown failures indistinguishable from all returned Auth results.
+    }
+    return receipt;
+  } catch {
+    return loginUnavailable();
   }
-
-  const supabase = createClient(url, anon);
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: `${appUrl}/review` },
-  });
-
-  if (error) {
-    return NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(error.message)}`, appUrl),
-      { status: 303 }
-    );
-  }
-
-  return NextResponse.redirect(new URL("/login?sent=1", appUrl), { status: 303 });
 }

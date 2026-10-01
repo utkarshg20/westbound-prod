@@ -1,67 +1,35 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { authUnavailable, createRequestAuth, isSameOrigin, noStore } from "./lib/review-auth";
 
-/**
- * Review mutations require a token verified by this project's Supabase Auth.
- * Explicitly set REQUIRE_DAN_AUTH=false only for local stub/demo use.
- * This preserves the existing authenticated-project-user policy, not a Dan role.
- */
+/** The existing authenticated-project-user policy, not a Dan-only role. */
 export async function middleware(req: NextRequest) {
-  if (process.env.REQUIRE_DAN_AUTH === "false") {
+  if (process.env.REQUIRE_DAN_AUTH === "false") return NextResponse.next();
+  if (!req.nextUrl.pathname.startsWith("/api/review/") || req.method === "GET") {
     return NextResponse.next();
   }
 
-  const isReviewMutation =
-    req.nextUrl.pathname.startsWith("/api/review/") &&
-    req.method !== "GET";
-
-  if (!isReviewMutation) return NextResponse.next();
-
-  const accessToken =
-    req.cookies.get("sb-access-token")?.value ||
-    req.cookies.get("sb-auth-token")?.value;
-
-  if (!accessToken) {
-    return NextResponse.json(
-      { error: "Authentication required — sign in at /login" },
-      { status: 401 }
-    );
-  }
-
-  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anonKey) {
-    return NextResponse.json(
-      { error: "Review authentication is not configured" },
-      { status: 503 }
-    );
-  }
-
+  let auth: ReturnType<typeof createRequestAuth> | undefined;
   try {
-    const supabase = createClient(url, anonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
-    // Cookie presence and locally decoded claims are not authentication.
-    const { data, error } = await supabase.auth.getUser(accessToken);
-    if (error || !data.user) {
-      return NextResponse.json(
+    if (!isSameOrigin(req)) {
+      return noStore(NextResponse.json({ error: "Same-origin request required" }, { status: 403 }));
+    }
+    auth = createRequestAuth(req);
+    // The SDK refreshes expired sessions and verifies the user with Supabase Auth.
+    const { data, error } = await auth.client.auth.getUser();
+    if (error && (error.status === undefined || error.status >= 500)) {
+      return auth.finish(authUnavailable());
+    }
+    if (error || !data.user?.id) {
+      return auth.finish(NextResponse.json(
         { error: "Invalid or expired session — sign in at /login" },
         { status: 401 }
-      );
+      ));
     }
-    return NextResponse.next();
+    // Include refreshed request cookies for any downstream session consumers.
+    return auth.finish(NextResponse.next({ request: req }));
   } catch {
-    return NextResponse.json(
-      { error: "Review authentication is unavailable" },
-      { status: 503 }
-    );
+    return auth ? auth.finish(authUnavailable()) : authUnavailable();
   }
 }
 
-export const config = {
-  matcher: ["/api/review/:path*"],
-};
+export const config = { matcher: ["/api/review/:path*"] };

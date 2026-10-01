@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.50.0",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "^2.114.0",
     "@westbound/dsp": "workspace:*",
     "@westbound/platform": "workspace:*",
     "next": "^15.3.3",
