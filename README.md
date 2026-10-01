@@ -60,7 +60,7 @@ Set `USE_STUB_ADAPTERS=false` when API keys are configured.
 - `POST /api/studio/poc` — run studio spikes
 - `POST /api/studio/vertical-slice` — end-to-end episode slice (stops at `dan_review` by default)
 
-## Review API authentication
+## Dashboard API authentication
 
 `/login` requests a magic link for an existing Supabase user; it does not create
 accounts. `/auth/confirm` verifies an email token hash and always redirects to
@@ -71,11 +71,43 @@ requires an HTTPS `NEXT_PUBLIC_APP_URL`, and those cookies are Secure. Old raw
 
 Configure `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `SUPABASE_URL` (or
 `NEXT_PUBLIC_SUPABASE_URL`) for the same project as the dashboard database.
-Auth form posts and review mutations must have an Origin matching
+Auth form posts and gated API requests must have an Origin matching
 `NEXT_PUBLIC_APP_URL`; local development defaults to `http://localhost:3000`.
-The existing `/api/review/*` mutation gate uses Supabase Auth's `getUser`, refreshes
-expired sessions through the SDK, and preserves cookie and no-cache headers on
-success and failure. Missing configuration or failed verification blocks access.
+
+Every non-GET request to `/api/*` outside `/api/auth/*` passes one middleware
+gate: a foreign or missing Origin gets 403; then Supabase Auth's `getUser` must
+verify the session (401 when it is missing, invalid or expired; 503 when
+configuration or the Auth service is unavailable). The SDK refreshes expired
+sessions, and cookie and no-cache headers are preserved on success and failure.
+The gated routes are:
+
+| Route | What it changes |
+| --- | --- |
+| `POST /api/review/approve`, `POST /api/review/reject` | review decisions; approval can enqueue worker jobs |
+| `POST /api/review/master-upload` | uploads a master to R2 and records it on the run |
+| `POST /api/ops/dlq-retry` | re-queues a dead-letter job (can cause provider spend) and deletes its row |
+| `POST /api/ops/royalty-import` | writes revenue rows |
+| `POST /api/refs/upload` | forwards a ref asset to the worker with the worker secret |
+
+A route added under `/api` later falls under the same rule unless it is under
+`/api/auth/`. Dashboard forms show a sign-in link on 401. DLQ retry has no UI
+control; a retry request needs the signed-in browser session and a matching
+Origin, for example `fetch` from a signed-in dashboard tab.
+
+Outside this gate: `POST /api/auth/magic-link` and `POST /api/auth/logout` (they
+start or end the session and check Origin themselves), `GET /auth/confirm`, GET
+requests (no API route handles GET today) and every page (`/`, `/review`, `/ops`,
+`/metrics`, `/revenue`, `/calendar`, `/errors`, `/login`). Pages still render
+service-role data without sign-in; gating them is a separate owner decision. No
+dashboard API has a server-to-server caller (n8n workflows and scripts call the
+worker, which checks `x-n8n-secret` only when `N8N_WEBHOOK_SECRET` is set), so
+the gate has no machine-credential exemption and does not accept the worker secret.
+
+With the Next.js 15.5 default `experimental.middlewareClientMaxBodySize`, a route
+handler receives only the first 10 MB of a request body that passes through this
+middleware. Larger uploads to `/api/review/master-upload` already fail for that
+reason, and the same limit now applies to `/api/refs/upload`.
+
 `REQUIRE_DAN_AUTH` defaults on; set it to `false` only for an isolated local
 stub/demo. This bypass does not send sign-in emails or bypass Supabase login.
 
@@ -93,10 +125,11 @@ template. The supported template link is:
 ```
 
 This remains the existing **authenticated project user** policy, not a Dan-only
-role or allowlist. `shouldCreateUser:false` protects this form; it does not disable
-other signup routes in the Supabase project. Service-role data handlers are
-unchanged and bypass RLS. Protected scope is still review mutations, not all
-dashboard pages or other APIs. Link requests use the SDK without session storage
+role or allowlist: any signed-in project user can call every gated route,
+including the ops routes. `shouldCreateUser:false` protects this form; it does not
+disable other signup routes in the Supabase project. Service-role data handlers are
+unchanged and bypass RLS. Protected scope is the non-GET dashboard APIs listed
+above, not dashboard pages. Link requests use the SDK without session storage
 and return the same response for every provider outcome, including mail-service
 and network failures. These failures cannot be distinguished from unknown accounts
 through the response; the receipt is not proof of delivery. Local validation and
