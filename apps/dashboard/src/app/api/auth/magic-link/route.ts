@@ -12,16 +12,18 @@ export async function POST(req: NextRequest) {
       return loginRedirect("error=invalid_email");
     }
     const client = createLinkSender();
-    const { error } = await client.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: `${appOrigin()}/auth/confirm`,
-      },
-    });
-    // Account-specific results have identical status, location and cookies.
-    // Only a service/transport failure is distinguished, never provider text.
-    return loginRedirect(error && (error.status === undefined || error.status >= 500) ? "error=unavailable" : "sent=1");
+    const emailRedirectTo = `${appOrigin()}/auth/confirm`;
+    const receipt = loginRedirect("sent=1");
+    try {
+      await client.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: false, emailRedirectTo },
+      });
+    } catch {
+      // Provider failures can depend on whether an account was found.
+      // Keep thrown failures indistinguishable from all returned Auth results.
+    }
+    return receipt;
   } catch {
     return loginUnavailable();
   }

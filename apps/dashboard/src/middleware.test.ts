@@ -4,6 +4,7 @@ import { middleware } from "./middleware";
 import { POST as requestLink } from "./app/api/auth/magic-link/route";
 import { GET as confirmLink } from "./app/auth/confirm/route";
 import { POST as logout } from "./app/api/auth/logout/route";
+import * as reviewAuth from "./lib/review-auth";
 
 // Auth protocol fixtures exercise the actual routes, Supabase SDK and SSR cookie
 // implementation. No real email, Supabase service, or product-quality evaluation.
@@ -86,6 +87,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   expect(unexpected).toEqual([]);
@@ -112,7 +114,7 @@ describe("magic-link routes with the real Supabase SDK", () => {
     expect(calls).toEqual([]);
   });
 
-  it.each([400, 401, 403, 422, 429])("returns the same response for known and unknown/account-error outcomes (%i)", async (status) => {
+  it.each([400, 401, 403, 422, 429, 500, 503])("returns the same response for known and unknown/provider-error outcomes (%i)", async (status) => {
     const send = () => {
       const form = new FormData(); form.set("email", user.email);
       return requestLink(request("/api/auth/magic-link", { body: form }));
@@ -128,11 +130,47 @@ describe("magic-link routes with the real Supabase SDK", () => {
     expectPrivate(unknown);
   });
 
-  it("reports a service outage with a generic message", async () => {
-    otpStatus = 500;
+  it("keeps a network failure indistinguishable from an unknown account", async () => {
+    const send = () => {
+      const form = new FormData(); form.set("email", user.email);
+      return requestLink(request("/api/auth/magic-link", { body: form }));
+    };
+    otpStatus = 422;
+    const unknown = await send();
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Network unavailable"));
+    const unavailable = await send();
+    expect(unavailable.status).toBe(unknown.status);
+    expect([...unavailable.headers]).toEqual([...unknown.headers]);
+    expect(await unavailable.text()).toBe(await unknown.text());
+    expect(unavailable.cookies.getAll()).toEqual([]);
+    expect(unavailable.headers.get("location")).toBe(`${origin}/login?sent=1`);
+    expectPrivate(unavailable);
+  });
+
+  it("reports missing local configuration before contacting Auth", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", undefined);
     const form = new FormData(); form.set("email", user.email);
     const response = await requestLink(request("/api/auth/magic-link", { body: form }));
     expect(response.headers.get("location")).toBe(`${origin}/login?error=unavailable`);
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps a thrown SDK error indistinguishable from an unknown account", async () => {
+    const send = () => {
+      const form = new FormData(); form.set("email", user.email);
+      return requestLink(request("/api/auth/magic-link", { body: form }));
+    };
+    otpStatus = 422;
+    const unknown = await send();
+    const client = reviewAuth.createLinkSender();
+    vi.spyOn(client.auth, "signInWithOtp").mockRejectedValueOnce(new Error("Provider unavailable"));
+    vi.spyOn(reviewAuth, "createLinkSender").mockReturnValueOnce(client);
+    const unavailable = await send();
+    expect(unavailable.status).toBe(unknown.status);
+    expect([...unavailable.headers]).toEqual([...unknown.headers]);
+    expect(await unavailable.text()).toBe(await unknown.text());
+    expect(unavailable.cookies.getAll()).toEqual([]);
+    expectPrivate(unavailable);
   });
 
   it.each(["", "?type=email", "?token_hash=token&type=recovery"])("rejects incomplete or wrong-purpose links: %s", async (query) => {

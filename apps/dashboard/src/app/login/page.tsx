@@ -21,7 +21,7 @@ export default async function LoginPage({
         Use the email address provisioned for this studio. This form does not create an account.
       </p>
       {error && <p role="alert">{error}</p>}
-      {params.sent === "1" && <p role="status">If your account is eligible, a sign-in link is on its way. Check your inbox.</p>}
+      {params.sent === "1" && <p role="status">If this account is provisioned, check your email for a sign-in link. If it does not arrive, try again later or contact your studio administrator.</p>}
       {params.signed_out === "1" && <p role="status">You are signed out of this browser.</p>}
       <form
         action="/api/auth/magic-link"

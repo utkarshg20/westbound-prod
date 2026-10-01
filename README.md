@@ -93,9 +93,11 @@ role or allowlist. `shouldCreateUser:false` protects this form; it does not disa
 other signup routes in the Supabase project. Service-role data handlers are
 unchanged and bypass RLS. Protected scope is still review mutations, not all
 dashboard pages or other APIs. Link requests use the SDK without session storage
-and return the same response for account-specific provider outcomes. Session
-storage starts only after token-hash confirmation. No hosted settings or email
-templates were changed.
+and return the same response for every provider outcome, including mail-service
+and network failures. These failures cannot be distinguished from unknown accounts
+through the response; the receipt is not proof of delivery. Local validation and
+configuration errors are reported before contacting Auth. Session storage starts
+only after token-hash confirmation. No hosted settings or email templates were changed.
 Tests exercise the actual routes and Supabase SDK against controlled Auth protocol
 responses; deployed login and actual email delivery remain unverified.
 
