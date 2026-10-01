@@ -9,6 +9,10 @@ Unified platform for:
 
 ## Quick start
 
+Use Node.js 22 or newer and pnpm 9.15.0. CI and both application Docker images
+use Node.js 22. The dashboard's Supabase SDK requires Node.js 22 and its native
+WebSocket implementation, even when the application only uses Auth or database APIs.
+
 ```bash
 pnpm install
 cp .env.example .env
