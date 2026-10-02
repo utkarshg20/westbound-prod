@@ -106,7 +106,10 @@ the gate has no machine-credential exemption and does not accept the worker secr
 With the Next.js 15.5 default `experimental.middlewareClientMaxBodySize`, a route
 handler receives only the first 10 MB of a request body that passes through this
 middleware. Larger uploads to `/api/review/master-upload` already fail for that
-reason, and the same limit now applies to `/api/refs/upload`.
+reason, and the same limit now applies to `/api/refs/upload` and to the JSON
+body of `/api/ops/royalty-import` (a royalty CSV over about 10 MB will fail to
+parse). Raising the limit is an owner decision: Next buffers up to that many
+bytes per request before the session check can reject it.
 
 `REQUIRE_DAN_AUTH` defaults on; set it to `false` only for an isolated local
 stub/demo. This bypass does not send sign-in emails or bypass Supabase login.
