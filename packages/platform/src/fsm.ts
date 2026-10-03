@@ -11,12 +11,18 @@ export const VALID_TRANSITIONS: Record<ProductionStage, ProductionStage[]> = {
   failed: ["draft"],
 };
 
+export function isValidStageTransition(
+  current: ProductionStage,
+  next: ProductionStage
+): boolean {
+  return VALID_TRANSITIONS[current].includes(next);
+}
+
 export function assertValidStageTransition(
   current: ProductionStage,
   next: ProductionStage
 ): void {
-  const allowed = VALID_TRANSITIONS[current];
-  if (!allowed.includes(next)) {
+  if (!isValidStageTransition(current, next)) {
     throw new Error(`Invalid production stage transition: ${current} → ${next}`);
   }
 }

@@ -83,3 +83,17 @@ export const MoodTagSchema = z
   .min(1)
   .max(40)
   .transform((s) => s.toLowerCase());
+
+/** Dashboard review queues that accept approve / reject decisions. */
+export const ReviewQueueSchema = z.enum(["sync", "hero_publish", "supervisor_outreach"]);
+export type ReviewQueue = z.infer<typeof ReviewQueueSchema>;
+
+/** Body of POST /api/review/approve and /api/review/reject. */
+export const ReviewDecisionSchema = z.object({
+  itemId: z.string().trim().min(1).max(128),
+  queue: ReviewQueueSchema,
+});
+export type ReviewDecision = z.infer<typeof ReviewDecisionSchema>;
+
+/** Persisted review items (tracks, production runs, outreach) are keyed by UUID. */
+export const ReviewItemIdSchema = z.string().uuid();

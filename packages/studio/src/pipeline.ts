@@ -234,7 +234,13 @@ export class StudioPipeline {
     runId: string,
     scheduledAt: Date
   ): Promise<ProductionRun> {
-    await this.repo.updateProductionStage(runId, "scheduled");
+    const run = await this.repo.getProductionRun(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+    // Same gate as the dashboard approval: no master/episode video, no schedule.
+    resolvePublishMediaUri(run.metadata as Record<string, unknown>);
+    // Single FSM-checked dan_review -> scheduled transition (it used to run
+    // twice, and scheduled -> scheduled always threw after the job was queued).
+    const scheduled = await this.repo.updateProductionStage(runId, "scheduled");
     const { createSupabaseAdmin } = await import("@westbound/platform");
     const db = createSupabaseAdmin();
     await db.from("releases").insert({
@@ -244,7 +250,7 @@ export class StudioPipeline {
       stage: "scheduled",
     });
     await enqueueJob("youtube.publish", { runId }, { productionRunId: runId });
-    return this.repo.updateProductionStage(runId, "scheduled");
+    return scheduled;
   }
 
   async publish(runId: string): Promise<ProductionRun> {
