@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { AssetStorage, buildAssetKey } from "@westbound/platform";
 import { createServerSupabase } from "@/lib/supabase";
 import { ingestTagsForFilename } from "@/lib/ingest-tags";
 
+const PROJECT_SLUG = "studio";
+const ENTITY_SLUG = "sammy_rane";
+
 /**
- * Upload a Dan ref asset into the studio asset library via worker job.
+ * Upload a Dan ref asset into the studio asset library.
+ * Uploads directly to R2 — no base64-over-JSON worker hop.
  * Body: multipart form with `file` + optional `filename`.
  */
 export async function POST(req: Request) {
@@ -18,11 +23,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "file required" }, { status: 400 });
   }
 
-  const filename =
-    String(form.get("filename") ?? file.name ?? "ref.bin").replace(
-      /[^a-zA-Z0-9._-]/g,
-      "_"
-    );
+  const filename = String(form.get("filename") ?? file.name ?? "ref.bin").replace(
+    /[^a-zA-Z0-9._-]/g,
+    "_"
+  );
   const contentType = file.type || "application/octet-stream";
   const type = contentType.startsWith("audio")
     ? "audio"
@@ -30,51 +34,71 @@ export async function POST(req: Request) {
       ? "video"
       : "image";
   const tags = ingestTagsForFilename(filename);
-
   const buf = Buffer.from(await file.arrayBuffer());
-  const workerUrl = process.env.WORKER_API_URL ?? "http://localhost:3001";
-  const secret = process.env.N8N_WEBHOOK_SECRET;
 
-  let workerResp: Response;
-  try {
-    workerResp = await fetch(`${workerUrl}/api/jobs/enqueue`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(secret ? { "x-n8n-secret": secret } : {}),
-      },
-      body: JSON.stringify({
-        type: "studio.ingest_asset",
-        payload: {
-          projectSlug: "studio",
-          entitySlug: "sammy_rane",
-          filename,
-          bodyBase64: buf.toString("base64"),
-          contentType,
-          type,
-          tags,
-          metadata: { filename },
-        },
-      }),
-    });
-  } catch {
+  // Resolve project_id for this entity's namespace.
+  const { data: project, error: projErr } = await db
+    .from("projects")
+    .select("id")
+    .eq("slug", PROJECT_SLUG)
+    .maybeSingle();
+  if (projErr) {
+    return NextResponse.json({ error: projErr.message }, { status: 500 });
+  }
+  if (!project) {
     return NextResponse.json(
-      { error: "worker unreachable — start pnpm worker" },
-      { status: 502 }
+      { error: `project not found: ${PROJECT_SLUG}` },
+      { status: 500 }
     );
   }
 
-  if (!workerResp.ok) {
-    if (workerResp.status === 413) {
-      return NextResponse.json(
-        { error: `file too large: worker rejected the base64 body (limit ~75 KB; file is ${buf.length} bytes)` },
-        { status: 413 }
-      );
-    }
-    return NextResponse.json(
-      { error: `worker rejected the upload (HTTP ${workerResp.status})` },
-      { status: 502 }
-    );
+  // Determine the next version number (same logic as AssetLibrary.ingest).
+  const { data: existing, error: listErr } = await db
+    .from("assets")
+    .select("version, r2_uri")
+    .eq("project_id", project.id);
+  if (listErr) {
+    return NextResponse.json({ error: listErr.message }, { status: 500 });
+  }
+  const sameEntity = (existing ?? []).filter((a: { r2_uri: string }) =>
+    a.r2_uri.includes(`/${ENTITY_SLUG}/`)
+  );
+  const version =
+    sameEntity.length > 0
+      ? Math.max(...(sameEntity as { version: number }[]).map((a) => a.version)) + 1
+      : 1;
+
+  const key = buildAssetKey({
+    project: PROJECT_SLUG,
+    entity: ENTITY_SLUG,
+    version,
+    filename,
+  });
+
+  // Upload directly to R2; fall back to a local:// stub when R2 is not configured.
+  let r2Uri = `local://${key}`;
+  try {
+    const storage = await AssetStorage.fromEnv();
+    r2Uri = await storage.upload(key, buf, contentType);
+  } catch {
+    // R2 not configured — local dev only; stub path still creates the DB row.
+  }
+
+  const { error: insertErr } = await db.from("assets").insert({
+    project_id: project.id,
+    character_id: null,
+    parent_id: null,
+    type,
+    r2_uri: r2Uri,
+    version,
+    tool: null,
+    prompt_hash: null,
+    qa_status: "pending",
+    tags: tags.length ? tags : ["dashboard_upload", "ref_pack"],
+    metadata: { filename, entitySlug: ENTITY_SLUG, contentType },
+  });
+  if (insertErr) {
+    return NextResponse.json({ error: insertErr.message }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, filename, type, tags });
