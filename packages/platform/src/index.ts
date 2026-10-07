@@ -7,3 +7,4 @@ export * from "./logging.js";
 export * from "./fsm.js";
 export * from "./entity-schemas.js";
 export * from "./media-fetch.js";
+export * from "./publish-media.js";

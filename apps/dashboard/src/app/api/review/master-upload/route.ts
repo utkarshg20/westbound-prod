@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { AssetStorage, buildAssetKey, createRepository } from "@westbound/platform";
+import {
+  AssetStorage,
+  buildAssetKey,
+  type ProductionStage,
+} from "@westbound/platform";
 import { createServerSupabase } from "@/lib/supabase";
+import { reviewRepository } from "@/lib/review-decision";
 
 /**
  * S3 — Dan master hand-off.
@@ -9,7 +14,12 @@ import { createServerSupabase } from "@/lib/supabase";
  * episodeVideoUri) as the media source.
  *
  * Body: multipart `file` + `runId`.
+ *
+ * Refused (409) once the run is published, live or failed: a master can no
+ * longer reach (or change) what was released.
  */
+const MASTER_CLOSED_STAGES: readonly ProductionStage[] = ["published", "dsp_live", "failed"];
+
 export async function POST(req: Request) {
   const db = createServerSupabase();
   const form = await req.formData();
@@ -42,7 +52,7 @@ export async function POST(req: Request) {
 
   const { data: run, error: loadErr } = await db
     .from("production_runs")
-    .select("id, metadata, project_id")
+    .select("id, stage, project_id")
     .eq("id", runId)
     .maybeSingle();
   if (loadErr) {
@@ -50,6 +60,12 @@ export async function POST(req: Request) {
   }
   if (!run) {
     return NextResponse.json({ error: `run not found: ${runId}` }, { status: 404 });
+  }
+  if (MASTER_CLOSED_STAGES.includes(run.stage as ProductionStage)) {
+    return NextResponse.json(
+      { error: `run is in stage ${run.stage}; masters can no longer be attached`, stage: run.stage },
+      { status: 409 }
+    );
   }
 
   let resolveMasterUri: string;
@@ -73,28 +89,20 @@ export async function POST(req: Request) {
   }
 
   try {
-    const repo = createRepository();
+    // Same service-role client as above, so no env-mismatch fallback is needed;
+    // a failed write is reported instead of retried as a stale overwrite.
+    const repo = reviewRepository(db);
     await repo.mergeProductionRunMetadata(runId, {
       resolveMasterUri,
       resolveMasterFilename: filename,
       resolveMasterUploadedAt: new Date().toISOString(),
     });
   } catch (err) {
-    // Fallback if service-role env for platform loadEnv differs from Next server env.
-    void err;
-    const metadata = {
-      ...(run.metadata as Record<string, unknown>),
-      resolveMasterUri,
-      resolveMasterFilename: filename,
-      resolveMasterUploadedAt: new Date().toISOString(),
-    };
-    const { error: updErr } = await db
-      .from("production_runs")
-      .update({ metadata, updated_at: new Date().toISOString() })
-      .eq("id", runId);
-    if (updErr) {
-      return NextResponse.json({ error: updErr.message }, { status: 500 });
-    }
+    console.error("[master-upload] metadata write failed", err);
+    return NextResponse.json(
+      { error: "Master uploaded but the run metadata could not be updated", resolveMasterUri },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({ ok: true, runId, resolveMasterUri, filename });

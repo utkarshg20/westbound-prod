@@ -62,21 +62,52 @@ export class WestboundRepository {
   ): Promise<ProductionRun> {
     const current = await this.getProductionRun(id);
     if (!current) throw new Error(`Production run not found: ${id}`);
-    assertValidStageTransition(current.stage, stage);
+    const updated = await this.transitionProductionStage(id, current.stage, stage, {
+      status,
+    });
+    if (!updated) {
+      throw new Error(
+        `Production run ${id} left stage ${current.stage} before the ${stage} transition was applied`
+      );
+    }
+    return updated;
+  }
 
+  /**
+   * Compare-and-set stage transition: validated by the FSM, then applied only
+   * while the row is still in `from` (and, when `expectedUpdatedAt` is given,
+   * unchanged since it was read — required when `metadata` is a merge of a
+   * previously read value, so a concurrent master upload is not overwritten).
+   * Returns null when the run is missing or the condition no longer holds
+   * (nothing is written in that case); throws on an illegal transition or a
+   * database error.
+   */
+  async transitionProductionStage(
+    id: string,
+    from: ProductionRun["stage"],
+    to: ProductionRun["stage"],
+    extra: {
+      status?: ProductionRun["status"];
+      metadata?: Record<string, unknown>;
+      expectedUpdatedAt?: string;
+    } = {}
+  ): Promise<ProductionRun | null> {
+    assertValidStageTransition(from, to);
     const patch: Record<string, unknown> = {
-      stage,
+      stage: to,
       updated_at: new Date().toISOString(),
     };
-    if (status) patch.status = status;
-    const { data, error } = await this.db
+    if (extra.status) patch.status = extra.status;
+    if (extra.metadata) patch.metadata = extra.metadata;
+    let query = this.db
       .from("production_runs")
       .update(patch)
       .eq("id", id)
-      .select()
-      .single();
+      .eq("stage", from);
+    if (extra.expectedUpdatedAt) query = query.eq("updated_at", extra.expectedUpdatedAt);
+    const { data, error } = await query.select().maybeSingle();
     if (error) throw error;
-    return ProductionRunSchema.parse(data);
+    return data ? ProductionRunSchema.parse(data) : null;
   }
 
   /** Merge keys into production_runs.metadata (S3 master hand-off, etc.). */
