@@ -11,17 +11,24 @@ export function MasterUploadForm({
   hasMaster: boolean;
 }) {
   const [status, setStatus] = useState<string>("");
+  const [needsLogin, setNeedsLogin] = useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
     const data = new FormData(form);
     data.set("runId", runId);
+    setNeedsLogin(false);
     setStatus("Uploading master…");
     const res = await fetch("/api/review/master-upload", {
       method: "POST",
       body: data,
     });
+    if (res.status === 401) {
+      setNeedsLogin(true);
+      setStatus("Your session expired. Sign in again.");
+      return;
+    }
     const json = (await res.json()) as {
       ok?: boolean;
       error?: string;
@@ -56,7 +63,9 @@ export function MasterUploadForm({
         </button>
       </span>
       {status && (
-        <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>{status}</span>
+        <span role={needsLogin ? "alert" : undefined} style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+          {status} {needsLogin && <a href="/login" style={{ color: "inherit" }}>Sign in</a>}
+        </span>
       )}
     </form>
   );

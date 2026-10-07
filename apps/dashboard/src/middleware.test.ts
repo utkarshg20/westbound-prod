@@ -1,3 +1,6 @@
+import { readdirSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, type NextResponse } from "next/server";
 import { middleware } from "./middleware";
@@ -21,6 +24,22 @@ let expiresIn: number;
 let metadataSize: number;
 let userResult: unknown;
 
+// Every route handler under app/api is classified here; the inventory test fails
+// when a handler is added without a decision. No dashboard API has a
+// server-to-server caller (n8n workflows and scripts call the worker instead).
+// middleware-matcher.test.ts checks that the matcher sends these routes here.
+const reviewRoutes = ["/api/review/approve", "/api/review/reject", "/api/review/master-upload"];
+const newlyGatedRoutes = ["/api/ops/dlq-retry", "/api/ops/royalty-import", "/api/refs/upload"];
+const gatedRoutes = [...reviewRoutes, ...newlyGatedRoutes];
+const authRoutes = ["/api/auth/magic-link", "/api/auth/logout"];
+const appDir = fileURLToPath(new URL("./app/", import.meta.url));
+function routeHandlers(dir = appDir): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return routeHandlers(join(dir, entry.name));
+    return entry.name === "route.ts" ? [`/${relative(appDir, dir).split(sep).join("/")}`] : [];
+  });
+}
+
 function jwt(label: string) {
   return [
     Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
@@ -34,8 +53,8 @@ function session(label = "original", expires = expiresIn) {
     token_type: "bearer", user: { ...user, user_metadata: { note: "x".repeat(metadataSize) } },
   };
 }
-function request(path: string, options: { method?: string; cookie?: string; body?: BodyInit; origin?: string | null } = {}) {
-  const headers = new Headers();
+function request(path: string, options: { method?: string; cookie?: string; body?: BodyInit; origin?: string | null; headers?: Record<string, string> } = {}) {
+  const headers = new Headers(options.headers);
   if (options.origin !== null) headers.set("origin", options.origin ?? origin);
   if (options.cookie) headers.set("cookie", options.cookie);
   return new NextRequest(`${origin}${path}`, { method: options.method ?? "POST", headers, body: options.body });
@@ -52,6 +71,14 @@ function expectPrivate(response: NextResponse) {
 }
 async function signedIn() {
   return confirmLink(request("/auth/confirm?token_hash=source-protocol-token&type=email", { method: "GET", origin: null }));
+}
+async function sameAsReviewGate(path: string, options: Parameters<typeof request>[1] = {}) {
+  const review = await middleware(request("/api/review/approve", options));
+  const response = await middleware(request(path, options));
+  expect(response.status).toBe(review.status);
+  expect([...response.headers]).toEqual([...review.headers]);
+  expect(await response.text()).toBe(await review.text());
+  return response.status;
 }
 
 beforeEach(() => {
@@ -218,9 +245,9 @@ describe("magic-link routes with the real Supabase SDK", () => {
   });
 });
 
-describe("verified review mutations and refresh", () => {
-  it.each(["approve", "reject", "master-upload"])("protects %s with auth unset", async (route) => {
-    expect((await middleware(request(`/api/review/${route}`))).status).toBe(401);
+describe("verified mutations and refresh", () => {
+  it.each(gatedRoutes)("protects %s with auth unset", async (path) => {
+    expect((await middleware(request(path))).status).toBe(401);
     expect(calls).toEqual([]);
   });
 
@@ -229,13 +256,16 @@ describe("verified review mutations and refresh", () => {
     expect((await middleware(request("/api/review/approve"))).status).toBe(401);
   });
 
-  it("retains the explicit isolated-demo opt-out", async () => {
+  it.each(["/api/review/approve", "/api/ops/dlq-retry"])("retains the explicit isolated-demo opt-out for %s", async (path) => {
     vi.stubEnv("REQUIRE_DAN_AUTH", "false");
-    expect((await middleware(request("/api/review/approve"))).headers.get("x-middleware-next")).toBe("1");
+    expect((await middleware(request(path))).headers.get("x-middleware-next")).toBe("1");
     expect(calls).toEqual([]);
   });
 
-  it.each([["/api/review/approve", "GET"], ["/review", "GET"], ["/api/auth/magic-link", "POST"]])("leaves %s %s outside this gate", async (path, method) => {
+  it.each([
+    ["/api/review/approve", "GET"], ["/api/ops/dlq-retry", "GET"], ["/review", "GET"], ["/ops", "GET"], ["/ops", "POST"],
+    ["/api/auth/magic-link", "POST"], ["/api/auth/logout", "POST"],
+  ])("leaves %s %s outside this gate", async (path, method) => {
     expect((await middleware(request(path, { method }))).headers.get("x-middleware-next")).toBe("1");
     expect(calls).toEqual([]);
   });
@@ -298,6 +328,49 @@ describe("verified review mutations and refresh", () => {
   });
 });
 
+describe("other mutating dashboard APIs", () => {
+  it("classifies every API route handler as gated or /api/auth/*", () => {
+    expect(routeHandlers().filter((path) => path.startsWith("/api/")).sort())
+      .toEqual([...gatedRoutes, ...authRoutes].sort());
+  });
+
+  it.each(newlyGatedRoutes)("returns the review gate's exact 403, 401 and 503 responses for %s", async (path) => {
+    expect(await sameAsReviewGate(path, { origin: "https://other.example" })).toBe(403);
+    expect(await sameAsReviewGate(path)).toBe(401);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", undefined);
+    expect(await sameAsReviewGate(path)).toBe(503);
+    expect(calls).toEqual([]);
+  });
+
+  it("passes a Supabase-verified session through to an ops route", async () => {
+    const confirmed = await signedIn();
+    const response = await middleware(request("/api/ops/dlq-retry", { cookie: cookies(confirmed) }));
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(calls.at(-1)).toMatchObject({ path: "/auth/v1/user", authorization: `Bearer ${jwt("original")}` });
+    expectPrivate(response);
+  });
+
+  it("refreshes an expired session on an ops route and forwards the new cookies", async () => {
+    expiresIn = -60;
+    const confirmed = await signedIn();
+    const response = await middleware(request("/api/ops/royalty-import", { cookie: cookies(confirmed) }));
+    expect(calls.find((call) => call.path === "/auth/v1/token")?.body.refresh_token).toBe("original-refresh");
+    expect(calls.at(-1)?.authorization).toBe(`Bearer ${jwt("refreshed")}`);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(cookies(response)).not.toBe("");
+    expect(response.headers.get("x-middleware-request-cookie")).toContain("westbound-review");
+    expectPrivate(response);
+  });
+
+  it("has no server-to-server exemption: the worker secret is not a session", async () => {
+    vi.stubEnv("N8N_WEBHOOK_SECRET", "worker-secret");
+    const headers = { "x-n8n-secret": "worker-secret" };
+    expect((await middleware(request("/api/refs/upload", { headers, origin: null }))).status).toBe(403);
+    expect((await middleware(request("/api/refs/upload", { headers }))).status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("logout and configuration boundaries", () => {
   it("revokes only this session, clears the browser cookies and denies the next mutation", async () => {
     const confirmed = await signedIn();
@@ -332,7 +405,10 @@ describe("logout and configuration boundaries", () => {
 
   it.each([null, "https://other.example"])("rejects missing or foreign Origin (%s) on all cookie-backed mutation routes", async (requestOrigin) => {
     const confirmed = await signedIn(); calls = [];
-    for (const [handler, path] of [[middleware, "/api/review/approve"], [logout, "/api/auth/logout"], [requestLink, "/api/auth/magic-link"]] as const) {
+    for (const [handler, path] of [
+      ...gatedRoutes.map((path) => [middleware, path] as const),
+      [logout, "/api/auth/logout"] as const, [requestLink, "/api/auth/magic-link"] as const,
+    ]) {
       const response = await handler(request(path, { cookie: cookies(confirmed), origin: requestOrigin }));
       expect(response.status).toBe(403);
       expect(response.cookies.getAll()).toEqual([]);

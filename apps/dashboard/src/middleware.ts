@@ -1,12 +1,21 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authUnavailable, createRequestAuth, isSameOrigin, noStore } from "./lib/review-auth";
 
+/**
+ * Every non-GET dashboard API needs this gate. /api/auth/* handles sign-in and
+ * sign-out and checks Origin itself; pages are outside this gate. No dashboard
+ * API is called server-to-server (n8n and scripts call the worker), so no
+ * machine credential is accepted here.
+ */
+function requiresVerifiedSession(req: NextRequest): boolean {
+  const { pathname } = req.nextUrl;
+  return req.method !== "GET" && pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/");
+}
+
 /** The existing authenticated-project-user policy, not a Dan-only role. */
 export async function middleware(req: NextRequest) {
   if (process.env.REQUIRE_DAN_AUTH === "false") return NextResponse.next();
-  if (!req.nextUrl.pathname.startsWith("/api/review/") || req.method === "GET") {
-    return NextResponse.next();
-  }
+  if (!requiresVerifiedSession(req)) return NextResponse.next();
 
   let auth: ReturnType<typeof createRequestAuth> | undefined;
   try {
@@ -32,4 +41,5 @@ export async function middleware(req: NextRequest) {
   }
 }
 
-export const config = { matcher: ["/api/review/:path*"] };
+// Keep /api/auth/* and pages out of the middleware entirely.
+export const config = { matcher: ["/api/((?!auth/).*)"] };
