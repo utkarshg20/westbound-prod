@@ -69,6 +69,7 @@ export async function enqueueWorkerJob(job: Record<string, unknown>): Promise<bo
         ...(secret ? { "x-n8n-secret": secret } : {}),
       },
       body: JSON.stringify(job),
+      signal: AbortSignal.timeout(10_000),
     });
     return res.ok;
   } catch {

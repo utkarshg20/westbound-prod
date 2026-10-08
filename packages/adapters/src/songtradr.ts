@@ -18,6 +18,7 @@ export class SongtradrPublisher implements Publisher {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(30_000),
       body: JSON.stringify({
         title: input.title,
         description: input.description,

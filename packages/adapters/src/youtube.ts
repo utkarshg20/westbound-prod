@@ -9,6 +9,7 @@ async function getAccessToken(
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    signal: AbortSignal.timeout(15_000),
     body: new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
