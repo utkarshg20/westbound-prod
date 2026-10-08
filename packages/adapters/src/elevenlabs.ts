@@ -27,6 +27,7 @@ export class ElevenLabsVoiceGenerator implements VoiceGenerator {
           text: input.text,
           model_id: "eleven_multilingual_v2",
         }),
+        signal: AbortSignal.timeout(60_000),
       }
     );
 
