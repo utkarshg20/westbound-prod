@@ -10,6 +10,13 @@ import {
   reviewRepository,
 } from "@/lib/review-decision";
 
+function reviewerAllowed(req: Request, queue: string): boolean {
+  const reviewerEmail = process.env.REVIEWER_EMAIL;
+  if (!reviewerEmail || queue !== "hero_publish") return true;
+  const callerEmail = new Headers(req.headers).get("x-session-email");
+  return callerEmail === reviewerEmail;
+}
+
 export async function POST(req: Request) {
   const parsed = await parseReviewDecision(req);
   if (!parsed.ok) return parsed.response;
@@ -21,6 +28,10 @@ export async function POST(req: Request) {
   }
   const badId = invalidItemId(body.itemId);
   if (badId) return badId;
+
+  if (!reviewerAllowed(req, body.queue)) {
+    return reviewError(403, "only the designated reviewer can approve hero_publish runs");
+  }
 
   if (body.queue === "sync") {
     const { data: track, error: loadErr } = await db

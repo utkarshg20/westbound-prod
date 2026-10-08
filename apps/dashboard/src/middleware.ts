@@ -34,8 +34,10 @@ export async function middleware(req: NextRequest) {
         { status: 401 }
       ));
     }
-    // Include refreshed request cookies for any downstream session consumers.
-    return auth.finish(NextResponse.next({ request: req }));
+    // Forward the verified email so routes can enforce role restrictions.
+    const forwarded = new Headers(req.headers);
+    if (data.user.email) forwarded.set("x-session-email", data.user.email);
+    return auth.finish(NextResponse.next({ request: { headers: forwarded } }));
   } catch {
     return auth ? auth.finish(authUnavailable()) : authUnavailable();
   }
