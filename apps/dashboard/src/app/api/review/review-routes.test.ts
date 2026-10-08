@@ -10,6 +10,7 @@ const WORKER = "http://worker.example.test";
 const RUN_ID = "0b6c1d9e-6f3e-4c1a-9a51-6f1f2a3b4c5d";
 const UNKNOWN_ID = "9f9f9f9f-0000-4000-8000-000000000000";
 const UPDATED_AT = "2026-09-30T12:00:00.123456+00:00";
+const REVIEWER = "reviewer@example.test";
 
 type Row = Record<string, unknown> & { id: string };
 type Call = { method: string; table: string; url: URL; body: Record<string, unknown> | null };
@@ -52,10 +53,10 @@ function matches(row: Row, url: URL) {
   }
   return true;
 }
-function post(path: string, body: unknown) {
+function post(path: string, body: unknown, callerEmail = REVIEWER) {
   return new Request(`https://studio.example.test${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-session-email": callerEmail },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
@@ -65,6 +66,7 @@ beforeEach(() => {
   vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
   vi.stubEnv("WORKER_API_URL", WORKER);
   vi.stubEnv("N8N_WEBHOOK_SECRET", "worker-secret");
+  vi.stubEnv("REVIEWER_EMAIL", REVIEWER);
   runs = new Map();
   dbCalls = [];
   workerCalls = [];
@@ -272,6 +274,38 @@ describe("POST /api/review/reject (hero_publish)", () => {
     runs.set(RUN_ID, run("dan_review", withMaster));
     failStatus.PATCH = 500;
     expect((await rejectRun()).status).toBe(500);
+  });
+});
+
+describe("REVIEWER_EMAIL restriction (hero_publish)", () => {
+  it("returns 403 when a non-reviewer tries to approve", async () => {
+    runs.set(RUN_ID, run("dan_review", withMaster));
+    const res = await approve(post("/api/review/approve", { itemId: RUN_ID, queue: "hero_publish" }, "other@example.test"));
+    expect(res.status).toBe(403);
+    expect(patches()).toEqual([]);
+    expect(workerCalls).toEqual([]);
+  });
+
+  it("returns 403 when a non-reviewer tries to reject", async () => {
+    runs.set(RUN_ID, run("dan_review", withMaster));
+    const res = await reject(post("/api/review/reject", { itemId: RUN_ID, queue: "hero_publish" }, "other@example.test"));
+    expect(res.status).toBe(403);
+    expect(patches()).toEqual([]);
+  });
+
+  it("allows approve/reject when REVIEWER_EMAIL is not set (open policy)", async () => {
+    vi.stubEnv("REVIEWER_EMAIL", "");
+    runs.set(RUN_ID, run("dan_review", withMaster));
+    const res = await approve(post("/api/review/approve", { itemId: RUN_ID, queue: "hero_publish" }, "anyone@example.test"));
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 403 when reviewer email header is missing for hero_publish", async () => {
+    runs.set(RUN_ID, run("dan_review", withMaster));
+    const res = await approve(post("/api/review/approve", { itemId: RUN_ID, queue: "hero_publish" }, ""));
+    expect(res.status).toBe(403);
+    expect(patches()).toEqual([]);
+    expect(workerCalls).toEqual([]);
   });
 });
 
