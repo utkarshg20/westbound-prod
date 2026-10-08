@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import express from "express";
 import { enqueueJob, type JobType } from "@westbound/platform";
 import { runPocJob, runVerticalSliceJob } from "./handlers.js";
@@ -10,9 +11,15 @@ export function createServer(): express.Application {
 
   app.use((req, res, next) => {
     if (req.path === "/health") return next();
-    if (secret && req.headers["x-n8n-secret"] !== secret) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
+    if (secret) {
+      const provided = String(req.headers["x-n8n-secret"] ?? "");
+      const a = Buffer.from(provided);
+      const b = Buffer.from(secret);
+      const match = a.length === b.length && timingSafeEqual(a, b);
+      if (!match) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
     }
     next();
   });
