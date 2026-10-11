@@ -20,10 +20,18 @@ export async function POST(req: Request) {
   }
 
   const payload = (row.payload as Record<string, unknown>) ?? {};
-  const jobId = await enqueueJob(parsed.data, payload, {
-    productionRunId: row.production_run_id ?? undefined,
-  });
+  let jobId: string;
+  try {
+    jobId = await enqueueJob(parsed.data, payload, {
+      productionRunId: row.production_run_id ?? undefined,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `Failed to re-enqueue job: ${msg}` }, { status: 500 });
+  }
 
+  // Delete after successful enqueue. If this fails, the job is already running;
+  // the stale DLQ row can be cleaned up manually without re-running the job.
   await db.from("dead_letter_jobs").delete().eq("id", body.dlqId);
 
   return NextResponse.json({ ok: true, jobId });
