@@ -12,7 +12,7 @@ export function RefUploadForm() {
     const data = new FormData(form);
     setNeedsLogin(false);
     setStatus("Uploading…");
-    const res = await fetch("/api/refs/upload", { method: "POST", body: data });
+    const res = await fetch("/api/refs/upload", { method: "POST", body: data, signal: AbortSignal.timeout(30_000) });
     if (res.status === 401) {
       setNeedsLogin(true);
       setStatus("Your session expired. Sign in again.");
