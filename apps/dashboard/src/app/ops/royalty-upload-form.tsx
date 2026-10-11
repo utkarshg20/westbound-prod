@@ -15,6 +15,7 @@ export function RoyaltyUploadForm() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ csv }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (res.status === 401) {
       setNeedsLogin(true);

@@ -23,6 +23,7 @@ export function MasterUploadForm({
     const res = await fetch("/api/review/master-upload", {
       method: "POST",
       body: data,
+      signal: AbortSignal.timeout(60_000),
     });
     if (res.status === 401) {
       setNeedsLogin(true);
