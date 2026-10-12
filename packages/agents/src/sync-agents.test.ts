@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Signal } from "@westbound/platform";
-import { rankBriefMatches } from "./sync-agents.js";
+import { rankBriefMatches, scoreBriefVariant } from "./sync-agents.js";
+import { StubLlmClient } from "./llm.js";
 
 const baseSignal = (overrides: Partial<Signal> = {}): Signal => ({
   id: "s1",
@@ -15,6 +16,23 @@ const baseSignal = (overrides: Partial<Signal> = {}): Signal => ({
   processed_at: null,
   created_at: new Date().toISOString(),
   ...overrides,
+});
+
+describe("scoreBriefVariant", () => {
+  it("returns zero-score discard on malformed JSON from LLM", async () => {
+    class BadJsonLlm extends StubLlmClient {
+      override async complete() {
+        return {
+          text: "not valid json {{{",
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 },
+        };
+      }
+    }
+    const result = await scoreBriefVariant(new BadJsonLlm(), {}, {});
+    expect(result.total).toBe(0);
+    expect(result.discard).toBe(true);
+    expect(result.passed).toBe(false);
+  });
 });
 
 describe("rankBriefMatches", () => {
