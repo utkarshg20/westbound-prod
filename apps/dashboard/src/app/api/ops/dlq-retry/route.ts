@@ -27,6 +27,7 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error("[dlq-retry] enqueueJob failed", { dlqId: body.dlqId, jobType, error: msg });
     return NextResponse.json({ error: `Failed to re-enqueue job: ${msg}` }, { status: 500 });
   }
 
