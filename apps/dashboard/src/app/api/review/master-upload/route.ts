@@ -80,6 +80,7 @@ export async function POST(req: Request) {
     resolveMasterUri = await storage.upload(key, buf, contentType);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error("[master-upload] R2 upload failed", { runId, filename, error: msg });
     return NextResponse.json(
       {
         error: `R2 upload failed — set R2_* env vars (${msg})`,
