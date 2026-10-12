@@ -29,6 +29,7 @@ export async function POST(req: Request) {
     const imported = await aggregateRoyaltiesCsv(rows);
     return NextResponse.json({ imported });
   } catch (e) {
+    console.error("[royalty-import] failed", { error: String(e) });
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
