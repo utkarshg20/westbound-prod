@@ -48,6 +48,7 @@ export async function enqueueChannelVideo(
         sources: parsed.citations ?? [],
       };
     } catch {
+      logger.warn("LLM script response was not valid JSON; using raw text", { channelSlug });
       script = result.text;
       citations = { sources: [] };
     }
