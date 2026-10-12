@@ -259,8 +259,8 @@ Max per category: bpm 15, vocal 20, instruments 20, mood 25, length 10, avoidVio
         holdForDan: d.total >= 75 && d.total < 85,
       };
     }
-  } catch {
-    /* fall through */
+  } catch (e) {
+    logger.warn("scoreBriefVariant LLM response was not valid JSON; returning zero score", { error: String(e) });
   }
 
   return {
