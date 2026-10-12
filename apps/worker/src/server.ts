@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import express from "express";
-import { enqueueJob, type JobType } from "@westbound/platform";
+import { enqueueJob, logger, type JobType } from "@westbound/platform";
 import { runPocJob, runVerticalSliceJob } from "./handlers.js";
 
 export function createServer(): express.Application {
@@ -38,6 +38,7 @@ export function createServer(): express.Application {
       const id = await enqueueJob(type, payload ?? {}, { productionRunId });
       res.json({ jobId: id });
     } catch (e) {
+      logger.error("enqueue job failed", { error: String(e) });
       res.status(500).json({ error: String(e) });
     }
   });
@@ -47,6 +48,7 @@ export function createServer(): express.Application {
       const results = await runPocJob();
       res.json({ results });
     } catch (e) {
+      logger.error("studio poc job failed", { error: String(e) });
       res.status(500).json({ error: String(e) });
     }
   });
@@ -56,6 +58,7 @@ export function createServer(): express.Application {
       const result = await runVerticalSliceJob();
       res.json(result);
     } catch (e) {
+      logger.error("studio vertical-slice job failed", { error: String(e) });
       res.status(500).json({ error: String(e) });
     }
   });

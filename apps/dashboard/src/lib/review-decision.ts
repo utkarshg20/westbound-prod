@@ -72,7 +72,8 @@ export async function enqueueWorkerJob(job: Record<string, unknown>): Promise<bo
       signal: AbortSignal.timeout(10_000),
     });
     return res.ok;
-  } catch {
+  } catch (err) {
+    console.error("[review] enqueueWorkerJob failed", { type: job["type"], error: String(err) });
     return false;
   }
 }
