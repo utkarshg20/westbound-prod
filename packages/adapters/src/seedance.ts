@@ -40,6 +40,7 @@ export class SeedanceVideoGenerator implements VideoGenerator {
       });
 
       if (!res.ok) {
+        console.warn("[seedance] API returned non-OK status, returning stub", { status: res.status });
         return this.stub(input, durationSec);
       }
 
@@ -59,7 +60,8 @@ export class SeedanceVideoGenerator implements VideoGenerator {
         },
         costCents: Math.round(durationSec * 9),
       };
-    } catch {
+    } catch (e) {
+      console.warn("[seedance] generation failed, returning stub", { error: String(e) });
       return this.stub(input, durationSec);
     }
   }
