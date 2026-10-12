@@ -100,8 +100,8 @@ export async function planShots(
   try {
     const parsed = ShotPlanSchema.safeParse(JSON.parse(raw.text));
     if (parsed.success) return parsed.data;
-  } catch {
-    /* fall through */
+  } catch (e) {
+    logger.warn("planShots LLM response was not valid JSON; using default shot plan", { error: String(e) });
   }
 
   return {
