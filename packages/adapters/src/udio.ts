@@ -62,7 +62,8 @@ export class UdioMusicGenerator implements MusicGenerator {
           },
           costCents: 10,
         });
-      } catch {
+      } catch (e) {
+        console.warn("[udio] generation failed, returning stub", { error: String(e) });
         results.push(this.stub(input));
       }
     }
