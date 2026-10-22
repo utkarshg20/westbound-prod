@@ -15,8 +15,7 @@ export async function registerIdentifyyContentId(
   trackId: string
 ): Promise<IdentifyyRegisterResult> {
   const repo = createRepository();
-  const tracks = await repo.listTracks();
-  const track = tracks.find((t) => t.id === trackId);
+  const track = await repo.getTrack(trackId);
   if (!track) throw new Error(`Track not found: ${trackId}`);
 
   const audioUri = String(track.metadata.audioUri ?? "");

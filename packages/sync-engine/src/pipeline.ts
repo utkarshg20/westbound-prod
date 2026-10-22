@@ -10,6 +10,7 @@ import {
   createSupabaseAdmin,
   fetchAndUploadToR2,
   guessContentType,
+  logger,
 } from "@westbound/platform";
 
 export class SyncEngine {
@@ -120,9 +121,13 @@ export class SyncEngine {
   async submitToCurationQueue(trackIds: string[]): Promise<void> {
     const db = createSupabaseAdmin();
     for (const id of trackIds) {
-      const tracks = await this.repo.listTracks({ source: "sync" });
-      const track = tracks.find((t) => t.id === id);
-      if (!track) continue;
+      const track = await this.repo.getTrack(id);
+      if (!track) {
+        logger.warn("curation skipped: track not found", { trackId: id });
+        continue;
+      }
+      // Dan's hold is a decision; entering the queue must not overwrite it.
+      if (track.metadata.qaStatus === "hold_for_dan") continue;
 
       await db
         .from("tracks")
@@ -140,9 +145,11 @@ export class SyncEngine {
   async uploadApprovedTracks(trackIds: string[]): Promise<void> {
     const publisher = this.adapters.publishers.songtradr;
     for (const id of trackIds) {
-      const tracks = await this.repo.listTracks({ source: "sync" });
-      const track = tracks.find((t) => t.id === id);
-      if (!track) continue;
+      const track = await this.repo.getTrack(id);
+      if (!track) {
+        logger.warn("upload skipped: track not found", { trackId: id });
+        continue;
+      }
       if (track.metadata.uploaded === true) continue; // a repeated job must not submit the same track twice
       await publisher.publish({
         title: track.title,

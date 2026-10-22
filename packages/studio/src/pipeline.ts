@@ -105,7 +105,8 @@ export class StudioPipeline {
     const run = await this.repo.getProductionRun(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
 
-    await this.repo.updateProductionStage(runId, "generating");
+    // A retry finds the run already generating; generating -> generating is not a legal transition.
+    if (run.stage !== "generating") await this.repo.updateProductionStage(runId, "generating");
 
     const llm = await createLlmClient();
     const script = String(run.metadata.script ?? "");
@@ -142,12 +143,18 @@ export class StudioPipeline {
     );
 
     if (!continuity.passed) {
-      await this.repo.updateProductionStage(runId, "dan_review", "active");
-      const { createSupabaseAdmin } = await import("@westbound/platform");
-      await createSupabaseAdmin().from("production_runs").update({
-        metadata: { ...run.metadata, continuity },
-      }).eq("id", runId);
-      return (await this.repo.getProductionRun(runId))!;
+      // generating may only go to assets_ready or failed, then assets_ready to dan_review. The continuity result
+      // rides on the second, compare-and-set transition so it cannot overwrite a concurrent metadata change.
+      await this.repo.updateProductionStage(runId, "assets_ready");
+      const ready = await this.repo.getProductionRun(runId);
+      if (!ready) throw new Error(`Run not found: ${runId}`);
+      const reviewed = await this.repo.transitionProductionStage(runId, "assets_ready", "dan_review", {
+        status: "active",
+        metadata: { ...ready.metadata, continuity },
+        expectedUpdatedAt: ready.updated_at,
+      });
+      if (!reviewed) throw new Error(`Production run ${runId} changed while its continuity result was being recorded`);
+      return reviewed;
     }
 
     const shotPlan = await planShots(llm, script, { productionRunId: runId });
