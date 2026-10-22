@@ -143,6 +143,7 @@ export class SyncEngine {
       const tracks = await this.repo.listTracks({ source: "sync" });
       const track = tracks.find((t) => t.id === id);
       if (!track) continue;
+      if (track.metadata.uploaded === true) continue; // a repeated job must not submit the same track twice
       await publisher.publish({
         title: track.title,
         description: String(track.metadata.description ?? ""),
