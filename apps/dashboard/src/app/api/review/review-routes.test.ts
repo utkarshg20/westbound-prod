@@ -336,17 +336,27 @@ describe("review decision body validation", () => {
 });
 
 describe("POST /api/review/master-upload stage check", () => {
-  function upload() {
+  function upload(sessionEmail: string | null = REVIEWER) {
     const form = new FormData();
     form.set("runId", RUN_ID);
     form.set("file", new File([new Uint8Array([1, 2, 3])], "ep1.mov", { type: "video/quicktime" }));
     return masterUpload(new Request("https://studio.example.test/api/review/master-upload", {
       method: "POST",
       body: form,
+      headers: sessionEmail ? { "x-session-email": sessionEmail } : {},
     }));
   }
 
-  it.each(["published", "dsp_live", "failed"])(
+  it("is for the designated reviewer only: anyone else is refused before the database is touched", async () => {
+    runs.set(RUN_ID, run("assets_ready"));
+    for (const who of ["someone.else@example.test", null]) {
+      const res = await upload(who);
+      expect(res.status).toBe(403);
+    }
+    expect(dbCalls).toEqual([]);
+  });
+
+  it.each(["scheduled", "published", "dsp_live", "failed"])(
     "refuses a master for a run in %s before uploading anything",
     async (stage) => {
       runs.set(RUN_ID, run(stage));
