@@ -140,8 +140,10 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
       }
     },
     "youtube.publish": async (job) => {
-      const runId = String(job.data.payload.runId ?? job.data.productionRunId);
-      if (!runId) throw new Error("runId required for youtube.publish");
+      const rawRunId = job.data.payload.runId ?? job.data.productionRunId;
+      // String(undefined) is the truthy string "undefined": check the value, not its string form.
+      if (typeof rawRunId !== "string" || !rawRunId) throw new Error("runId required for youtube.publish");
+      const runId = rawRunId;
       const pipeline = await StudioPipeline.create();
       await pipeline.publish(runId);
       logger.info("Episode published", { runId });

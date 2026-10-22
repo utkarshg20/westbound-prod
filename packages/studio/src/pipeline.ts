@@ -256,6 +256,14 @@ export class StudioPipeline {
   async publish(runId: string): Promise<ProductionRun> {
     const run = await this.repo.getProductionRun(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
+    // The review gate has to hold HERE, before any side effect: this used to upload to YouTube first and only then
+    // trip over the stage transition, so anything that could enqueue youtube.publish (n8n, a DLQ retry, Redis) could
+    // publish a run nobody approved, and a rejected or draft run still went out before the error.
+    if (run.stage !== "scheduled") {
+      throw new Error(
+        `Refusing to publish run ${runId}: it is in stage ${run.stage}, not scheduled (only a reviewed and approved run is published)`
+      );
+    }
 
     const title = run.title;
     const mediaUri = resolvePublishMediaUri(
@@ -275,15 +283,32 @@ export class StudioPipeline {
       });
     }
 
-    await publishers.youtube.publish({
-      title,
-      description: String(run.metadata.description ?? "Sammy Rane and Westbound"),
-      mediaUri,
-      scheduledAt: run.metadata.scheduledAt
-        ? new Date(String(run.metadata.scheduledAt))
-        : undefined,
-      tags: ["Sammy Rane", "Westbound", "rockumentary"],
-    });
+    const { createSupabaseAdmin: adminForPublish } = await import("@westbound/platform");
+    let metadataNow: Record<string, unknown> = { ...run.metadata };
+    if (run.metadata.youtubePublishedAt) {
+      // A retry after the upload succeeded but a later step failed: do not upload the video a second time.
+    } else {
+      await publishers.youtube.publish({
+        title,
+        description: String(run.metadata.description ?? "Sammy Rane and Westbound"),
+        mediaUri,
+        scheduledAt: run.metadata.scheduledAt
+          ? new Date(String(run.metadata.scheduledAt))
+          : undefined,
+        tags: ["Sammy Rane", "Westbound", "rockumentary"],
+      });
+      // Record that the upload happened before anything else can fail, so a retry does not repeat it.
+      metadataNow = { ...metadataNow, youtubePublishedAt: new Date().toISOString() };
+      const { error: markError } = await adminForPublish()
+        .from("production_runs")
+        .update({ metadata: metadataNow })
+        .eq("id", runId);
+      if (markError) {
+        throw new Error(
+          `YouTube upload for run ${runId} succeeded but could not be recorded (${markError.message}); do NOT retry blindly`
+        );
+      }
+    }
 
     const { createDspRelease, getReleaseChecklist } = await import("@westbound/dsp");
     const trackId = run.metadata.trackId as string | undefined;
@@ -298,7 +323,7 @@ export class StudioPipeline {
       );
     }
     const metadata = {
-      ...run.metadata,
+      ...metadataNow,
       dspChecklist: getReleaseChecklist(),
       publishedAt: new Date().toISOString(),
     };
