@@ -42,6 +42,10 @@ export async function POST(req: Request) {
     if (loadErr) return databaseError("loading the track", loadErr);
     if (!track) return reviewError(404, `track not found: ${body.itemId}`);
     const meta = (track.metadata as Record<string, unknown>) ?? {};
+    if (meta.uploaded === true || meta.qaStatus === "approved") {
+      // A second approval used to enqueue a second upload of the same track (a double submission to the publisher).
+      return reviewError(409, `track is already ${meta.uploaded === true ? "uploaded" : "approved"}`);
+    }
     const { error: updErr } = await db
       .from("tracks")
       .update({
@@ -107,13 +111,20 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok: true, stage: "scheduled", scheduledAt });
   } else if (body.queue === "supervisor_outreach") {
+    // Only a draft awaiting review can be approved. This used to flip ANY row, so a rejected or already-sent draft
+    // could be re-armed for sending (with its sent_at cleared).
     const { data, error } = await db
       .from("supervisor_outreach")
       .update({ status: "approved_for_send", sent_at: null })
       .eq("id", body.itemId)
+      .eq("status", "pending_dan_review")
       .select("id");
     if (error) return databaseError("approving the outreach draft", error);
-    if (!data?.length) return reviewError(404, `outreach draft not found: ${body.itemId}`);
+    if (!data?.length) {
+      const { data: current } = await db.from("supervisor_outreach").select("status").eq("id", body.itemId).maybeSingle();
+      if (!current) return reviewError(404, `outreach draft not found: ${body.itemId}`);
+      return reviewError(409, `outreach draft is ${String(current.status)}; only drafts pending review can be approved`);
+    }
   }
 
   return NextResponse.json({ ok: true });

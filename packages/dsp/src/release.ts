@@ -87,13 +87,27 @@ export async function aggregateRoyaltiesCsv(
   const db = createSupabaseAdmin();
   let count = 0;
   for (const row of rows) {
-    await db.from("revenue_events").insert({
+    const amountCents = Math.round(row.amount * 100);
+    const periodMonth = `${row.month}-01`;
+    // The same statement line imported twice (a double submit, or the file re-uploaded) must not double the revenue.
+    const { data: existing, error: lookupError } = await db
+      .from("revenue_events")
+      .select("id, metadata")
+      .eq("project_id", studio.id)
+      .eq("platform", row.platform)
+      .eq("period_month", periodMonth)
+      .eq("amount_cents", amountCents);
+    if (lookupError) throw new Error(`royalty import: could not check for duplicates (${lookupError.message})`);
+    const title = row.trackTitle ?? null;
+    if ((existing ?? []).some((e: { metadata?: { trackTitle?: string } | null }) => (e.metadata?.trackTitle ?? null) === title)) continue;
+    const { error } = await db.from("revenue_events").insert({
       project_id: studio.id,
       platform: row.platform,
-      amount_cents: Math.round(row.amount * 100),
-      period_month: `${row.month}-01`,
+      amount_cents: amountCents,
+      period_month: periodMonth,
       metadata: { trackTitle: row.trackTitle },
     });
+    if (error) throw new Error(`royalty import stopped at ${row.platform} ${row.month}: ${error.message} (${count} rows imported before it)`);
     count++;
   }
   return count;
