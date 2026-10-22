@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { findPublishMediaUri } from "@westbound/platform";
 import { createServerSupabase } from "@/lib/supabase";
+import { reviewerAllowed } from "@/lib/reviewer";
 import {
   databaseError,
   enqueueWorkerJob,
@@ -9,13 +10,6 @@ import {
   reviewError,
   reviewRepository,
 } from "@/lib/review-decision";
-
-function reviewerAllowed(req: Request, queue: string): boolean {
-  const reviewerEmail = process.env.REVIEWER_EMAIL;
-  if (!reviewerEmail || queue !== "hero_publish") return true;
-  const callerEmail = new Headers(req.headers).get("x-session-email");
-  return callerEmail === reviewerEmail;
-}
 
 export async function POST(req: Request) {
   const parsed = await parseReviewDecision(req);
