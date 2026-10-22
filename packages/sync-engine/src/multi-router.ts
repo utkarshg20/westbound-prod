@@ -3,8 +3,7 @@ import { createRepository, enqueueJob, logger } from "@westbound/platform";
 /** Hack 4: route one track to all monetization surfaces */
 export async function routeTrackToEngines(trackId: string): Promise<void> {
   const repo = createRepository();
-  const tracks = await repo.listTracks();
-  const track = tracks.find((t) => t.id === trackId);
+  const track = await repo.getTrack(trackId);
   if (!track) throw new Error(`Track not found: ${trackId}`);
 
   const eligibility = (track.metadata.multi_engine_eligibility as Record<string, boolean>) ?? {

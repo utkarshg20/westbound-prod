@@ -43,6 +43,11 @@ async function logError(
   }
 }
 
+/** The job enqueueChannelVideo queues for the run it just created: it names that run or video. */
+export function isAssembleFollowUp(payload: Record<string, unknown>): boolean {
+  return Boolean(payload.runId || payload.videoId);
+}
+
 export function startWorkers(): ReturnType<typeof createAllWorkers> {
   const handlers: Partial<
     Record<JobType, (job: Job<WestboundJobPayload>) => Promise<void>>
@@ -135,6 +140,14 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
       if (job.data.payload.proof14 === true) {
         const ids = await factory.schedule14DayProof(channel);
         logger.info("14-day YT proof scheduled", { count: ids.length, channel });
+      } else if (isAssembleFollowUp(job.data.payload)) {
+        // enqueueChannelVideo ends by enqueuing this job for the run it just created, with the same topic. Treating
+        // that follow-up as a new request enqueued another run, and another, for as long as the queue was left alone
+        // (a row, a production run and an LLM call per pass). Nothing assembles an existing run here yet, so say so
+        // and stop rather than start a new one.
+        logger.warn("assemble_video follow-up for an existing run: nothing to assemble, not starting another", {
+          channel, runId: job.data.payload.runId, videoId: job.data.payload.videoId,
+        });
       } else if (job.data.payload.topic) {
         await enqueueChannelVideo(channel, String(job.data.payload.topic));
       } else {
