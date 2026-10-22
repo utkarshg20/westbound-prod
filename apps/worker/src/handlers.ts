@@ -1,3 +1,5 @@
+import { recordContinuityResult } from "./continuity.js";
+import { isFinalFailure } from "./failure.js";
 import type { Job } from "bullmq";
 import {
   createAllWorkers,
@@ -280,13 +282,7 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
         ],
         { productionRunId: runId }
       );
-      await createSupabaseAdmin()
-        .from("production_runs")
-        .update({
-          metadata: { ...run.metadata, continuity: result },
-          stage: result.passed ? run.stage : "dan_review",
-        })
-        .eq("id", runId);
+      await recordContinuityResult(repo, runId, result);
       logger.info("Continuity check complete", {
         runId,
         passed: result.passed,
@@ -331,7 +327,7 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
 
   for (const worker of workers) {
     worker.on("failed", (job, err) => {
-      if (job) void logError(job, err.message);
+      if (job && isFinalFailure(job)) void logError(job, err.message);
       logger.error("Job failed", {
         jobId: job?.id,
         jobType: job?.data.type,
