@@ -17,6 +17,10 @@ export async function registerIdentifyyContentId(
   const repo = createRepository();
   const track = await repo.getTrack(trackId);
   if (!track) throw new Error(`Track not found: ${trackId}`);
+  // A sync track is registered only once a person approved it (held and rejected tracks used to be registered too).
+  if (track.source === "sync" && track.metadata.qaStatus !== "approved") {
+    throw new Error(`Track ${trackId} is not approved (qaStatus ${String(track.metadata.qaStatus ?? "unset")}); not registering it`);
+  }
 
   const audioUri = String(track.metadata.audioUri ?? "");
   if (!audioUri) throw new Error(`Track ${trackId} missing audioUri`);

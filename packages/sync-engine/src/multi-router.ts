@@ -19,7 +19,9 @@ export async function routeTrackToEngines(trackId: string): Promise<void> {
       mode: "bed_eligible",
     });
   }
-  if (eligibility.dsp_release) {
+  // Every other route is safe for a brand-new generated track; a release to distributors is not. It waits for approval
+  // (the release job itself also refuses an unapproved track, which used to dead-letter it after three attempts).
+  if (eligibility.dsp_release && track.metadata.qaStatus === "approved") {
     await enqueueJob("dsp.release_candidate", { trackId });
   }
   if (eligibility.content_id) {

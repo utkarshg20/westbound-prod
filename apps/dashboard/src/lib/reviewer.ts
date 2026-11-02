@@ -19,7 +19,7 @@ export function reviewerAllowed(req: Request, queue: string): boolean {
     return true;
   }
   const callerEmail = new Headers(req.headers).get("x-session-email");
-  return Boolean(callerEmail) && callerEmail === reviewerEmail;
+  return Boolean(callerEmail) && callerEmail!.trim().toLowerCase() === reviewerEmail.trim().toLowerCase();
 }
 
 export const REVIEWER_DENIED = "only the designated reviewer can decide hero_publish runs (REVIEWER_EMAIL)";

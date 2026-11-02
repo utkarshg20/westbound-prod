@@ -20,7 +20,7 @@ import { resolvePublishMediaUri } from "./publish-media.js";
 export { resolvePublishMediaUri } from "./publish-media.js";
 
 /** An upload claim older than this belongs to a job that crashed. */
-const UPLOAD_CLAIM_TTL_MS = 30 * 60 * 1000;
+const UPLOAD_CLAIM_TTL_MS = 60 * 60 * 1000;  // longer than the 30 minute upload plus the download and token calls
 
 const STAGES: ProductionStage[] = [
   "draft",
@@ -333,9 +333,19 @@ export class StudioPipeline {
           tags: ["Sammy Rane", "Westbound", "rockumentary"],
         });
       } catch (error) {
-        // The upload failed: give the claim back so the retry can try again instead of waiting out the TTL.
+        if (error instanceof Error && error.name === "UploadOutcomeUnknown") {
+          // The video may already be on YouTube. Keep the claim (it expires after the TTL) so the retries do not upload it again,
+          // and say what to do.
+          throw new Error(`${error.message}. Run ${runId} stays claimed for an hour; check the channel for the video before retrying.`);
+        }
+        // Definitely not uploaded (refused, or failed before any bytes were sent): give the claim back so the retry runs at once. Only
+        // while it is still ours: a job that took over a stale claim must not have its claim released by the one it replaced.
         const { youtubeUploadClaimedAt: _released, ...withoutClaim } = metadataNow;
-        await adminForPublish().from("production_runs").update({ metadata: withoutClaim }).eq("id", runId);
+        await adminForPublish()
+          .from("production_runs")
+          .update({ metadata: withoutClaim })
+          .eq("id", runId)
+          .eq("metadata->>youtubeUploadClaimedAt", claimedAt);
         throw error;
       }
       // Record that the upload happened before anything else can fail, so a retry does not repeat it.

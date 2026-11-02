@@ -18,6 +18,8 @@ export async function POST(req: Request) {
 
   const db = createServerSupabase();
   if (!db) {
+    // Demo mode (no database) is for local work. In production "recorded" must not be said when nothing was.
+    if (process.env.NODE_ENV === "production") return reviewError(503, "the database is not configured; the decision was NOT recorded");
     return NextResponse.json({ ok: true, demo: true });
   }
   const badId = invalidItemId(body.itemId);
@@ -36,23 +38,36 @@ export async function POST(req: Request) {
     if (loadErr) return databaseError("loading the track", loadErr);
     if (!track) return reviewError(404, `track not found: ${body.itemId}`);
     const meta = (track.metadata as Record<string, unknown>) ?? {};
-    if (meta.uploaded === true || meta.qaStatus === "approved") {
-      // A second approval used to enqueue a second upload of the same track (a double submission to the publisher).
-      return reviewError(409, `track is already ${meta.uploaded === true ? "uploaded" : "approved"}`);
+    if (meta.uploaded === true) return reviewError(409, "track is already uploaded");
+    if (meta.qaStatus === "rejected" || meta.deleted_at || meta.rejectedAt) {
+      return reviewError(409, "track was rejected; it cannot be approved");
     }
-    const { error: updErr } = await db
+    // Approved but never queued (the worker was down on the first click) may be approved again to queue it; a track whose upload
+    // is already queued may not, or the publisher would get it twice.
+    if (meta.qaStatus === "approved" && meta.uploadQueuedAt) return reviewError(409, "track is already approved and queued");
+    const { data: marked, error: updErr } = await db
       .from("tracks")
       .update({
         metadata: { ...meta, qaStatus: "approved", curationQueue: false },
       })
-      .eq("id", body.itemId);
+      .eq("id", body.itemId)
+      .select("id");
     if (updErr) return databaseError("approving the track", updErr);
+    if (!marked?.length) return reviewError(409, "track changed while it was being approved - reload and retry");
 
-    // Unchanged behaviour: the sync upload is best-effort; the worker may be offline.
-    await enqueueWorkerJob({
+    const queued = await enqueueWorkerJob({
       type: "sync.upload_track",
       payload: { trackIds: [body.itemId] },
     });
+    if (!queued) {
+      return reviewError(502, "track is approved but its upload could not be queued; approve it again once the worker is back", {
+        qaStatus: "approved",
+      });
+    }
+    await db
+      .from("tracks")
+      .update({ metadata: { ...meta, qaStatus: "approved", curationQueue: false, uploadQueuedAt: new Date().toISOString() } })
+      .eq("id", body.itemId);
   } else if (body.queue === "hero_publish") {
     const repo = reviewRepository(db);
     let run;

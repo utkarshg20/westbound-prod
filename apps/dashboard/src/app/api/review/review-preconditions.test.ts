@@ -16,7 +16,8 @@ describe("approve and reject preconditions", () => {
   });
   it("sync approve refuses a track that is already approved or uploaded", () => {
     const src = read("./approve/route.ts");
-    expect(src).toContain('meta.uploaded === true || meta.qaStatus === "approved"');
+    expect(src).toContain('meta.uploaded === true');
+    expect(src).toContain('meta.qaStatus === "approved" && meta.uploadQueuedAt');
   });
   it("the upload job skips a track already uploaded", () => {
     const src = readFileSync(fileURLToPath(new URL("../../../../../../packages/sync-engine/src/pipeline.ts", import.meta.url)), "utf8");

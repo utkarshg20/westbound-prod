@@ -31,7 +31,10 @@ export function parseRoyaltyCsv(csv: string): { rows: RoyaltyRow[]; errors: stri
   const rows: RoyaltyRow[] = [];
   const errors: string[] = [];
   const lines = csv.replace(/\r/g, "").trim().split("\n");
-  for (let i = 1; i < lines.length; i++) {
+  // A header row names the columns (or its amount cell is not a number). A file without one used to lose its first row.
+  const first = splitCsvLine(lines[0] ?? "");
+  const hasHeader = (first[0] ?? "").toLowerCase() === "platform" || first[1] === undefined || first[1] === "" || !Number.isFinite(Number(first[1]));
+  for (let i = hasHeader ? 1 : 0; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     const [platform, amount, month, trackTitle] = splitCsvLine(lines[i]);
     const n = Number(amount);

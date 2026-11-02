@@ -97,7 +97,10 @@ export async function markChecklistItem(
 
 /** Dollars to whole cents without binary-float drift: 1.005 * 100 is 100.49999999999999, not 100.5. */
 export function dollarsToCents(amount: number): number {
-  return Math.round(Number(`${amount.toFixed(6)}e2`));
+  if (!Number.isFinite(amount) || amount < 0) throw new Error(`not a valid dollar amount: ${amount}`);
+  // toFixed(10) only to get a decimal string without exponent notation; ten places is far past anything a statement carries,
+  // so the one rounding that matters (half a cent up) is the one below.
+  return Math.round(Number(`${amount.toFixed(10)}e2`));
 }
 
 export async function aggregateRoyaltiesCsv(
