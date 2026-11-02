@@ -16,6 +16,8 @@ export async function POST(req: Request) {
 
   const db = createServerSupabase();
   if (!db) {
+    // Demo mode (no database) is for local work. In production "recorded" must not be said when nothing was.
+    if (process.env.NODE_ENV === "production") return reviewError(503, "the database is not configured; the decision was NOT recorded");
     return NextResponse.json({ ok: true, demo: true });
   }
   const badId = invalidItemId(body.itemId);

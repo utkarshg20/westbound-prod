@@ -3,6 +3,17 @@ import { fetchProviderUri, guessContentType } from "@westbound/platform";
 
 export type FetchLike = typeof fetch;
 
+/**
+ * Thrown when the video bytes were sent (or may have been) and the outcome is not known: a connection reset or timeout after
+ * the body went out, a 5xx, or "finished" with no id. The video may be on YouTube. The caller must not retry blindly.
+ */
+export class UploadOutcomeUnknown extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UploadOutcomeUnknown";
+  }
+}
+
 async function getAccessToken(
   clientId: string,
   clientSecret: string,
@@ -67,21 +78,33 @@ export class YouTubePublisher implements Publisher {
     const sessionUrl = init.headers.get("location");
     if (!sessionUrl) throw new Error("YouTube upload init returned no upload URL");
 
-    const done = await this.fetchImpl(sessionUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType, "Content-Length": String(media.length) },
-      body: new Uint8Array(media),
-      signal: AbortSignal.timeout(30 * 60_000),
-    });
-    const text = await done.text();
-    if (!done.ok) throw new Error(`YouTube upload ${done.status}: ${text.slice(0, 300)}`);
+    let done: Response;
+    let text: string;
+    try {
+      // A Buffer is already a Uint8Array: no second copy of the file in memory.
+      done = await this.fetchImpl(sessionUrl, {
+        method: "PUT",
+        headers: { "Content-Type": contentType, "Content-Length": String(media.length) },
+        body: media as unknown as NonNullable<RequestInit["body"]>,
+        signal: AbortSignal.timeout(30 * 60_000),
+      });
+      text = await done.text();
+    } catch (error) {
+      throw new UploadOutcomeUnknown(`YouTube upload was interrupted after the video was sent (${String(error)}); it may be on the channel`);
+    }
+    // 4xx is YouTube refusing the video (nothing was stored). Anything else that is not success may have stored it.
+    if (!done.ok) {
+      const refused = done.status >= 400 && done.status < 500 && done.status !== 408 && done.status !== 429;
+      const message = `YouTube upload ${done.status}: ${text.slice(0, 300)}`;
+      throw refused ? new Error(message) : new UploadOutcomeUnknown(message);
+    }
     let id: string | undefined;
     try {
       id = (JSON.parse(text) as { id?: string }).id;
     } catch {
       /* handled below */
     }
-    if (!id) throw new Error("YouTube upload finished but returned no video id");
+    if (!id) throw new UploadOutcomeUnknown("YouTube upload finished but returned no video id; check the channel before retrying");
     return { externalId: id, url: `https://www.youtube.com/watch?v=${id}` };
   }
 }
@@ -98,6 +121,9 @@ export class StubAwareYouTubePublisher implements Publisher {
 
   async publish(input: PublishInput): Promise<{ externalId: string; url?: string }> {
     if (this.live) return this.live.publish(input);
+    // A stub id looks like a published video to the pipeline, which would record it and move the run to dsp_live with nothing
+    // on YouTube. Outside development, missing credentials are an error.
+    if (process.env.NODE_ENV === "production") throw new Error("YouTube credentials are not configured; refusing to record a stub publish");
     const externalId = `yt_stub_${crypto.randomUUID().slice(0, 8)}`;
     return {
       externalId,

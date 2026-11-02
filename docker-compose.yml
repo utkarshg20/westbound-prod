@@ -17,6 +17,10 @@ services:
       - WEBHOOK_URL=http://localhost:5678/
       - GENERIC_TIMEZONE=America/New_York
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-change-me-in-production}
+      # The workflows call the worker with {{$env.N8N_WEBHOOK_SECRET}} in x-n8n-secret; without these the secret is empty (401 once set).
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET:-}
+      - WORKER_API_URL=${WORKER_API_URL:-http://worker:3001}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:

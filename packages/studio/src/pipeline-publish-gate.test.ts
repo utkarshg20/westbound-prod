@@ -8,6 +8,8 @@ const state = vi.hoisted(() => ({
   ytCalls: 0,
   failDspLiveOnce: false,
   ytFails: false,
+  ytError: null as Error | null,
+  onYoutube: null as null | (() => void),
   markError: null as { message: string } | null,
   updates: [] as Record<string, unknown>[],
 }));
@@ -63,6 +65,8 @@ const make = () =>
     {},
     { publishers: { youtube: { publish: async () => {
       state.ytCalls++;
+      state.onYoutube?.();
+      if (state.ytError) throw state.ytError;
       if (state.ytFails) throw new Error("youtube down");
       return { externalId: "vid-1", url: "https://www.youtube.com/watch?v=vid-1" };
     } } } }
@@ -74,6 +78,8 @@ beforeEach(() => {
   state.ytCalls = 0;
   state.failDspLiveOnce = false;
   state.ytFails = false;
+  state.ytError = null;
+  state.onYoutube = null;
   state.markError = null;
   state.updates = [];
 });
@@ -130,7 +136,7 @@ describe("StudioPipeline.publish review gate", () => {
   });
 
   it("a claim left by a crashed job is taken over after the timeout", async () => {
-    state.metadata = { resolveMasterUri: "r2://b/m.mov", youtubeUploadClaimedAt: new Date(Date.now() - 31 * 60_000).toISOString() };
+    state.metadata = { resolveMasterUri: "r2://b/m.mov", youtubeUploadClaimedAt: new Date(Date.now() - 61 * 60_000).toISOString() };
     const run = await make().publish("run-1");
     expect(state.ytCalls).toBe(1);
     expect(run.stage).toBe("dsp_live");
@@ -144,4 +150,21 @@ describe("StudioPipeline.publish review gate", () => {
     await make().publish("run-1");
     expect(state.ytCalls).toBe(2);
   });
+
+  it("when the upload's outcome is unknown the claim is kept, so the retries do not upload a second copy", async () => {
+    state.ytError = Object.assign(new Error("interrupted after the video was sent"), { name: "UploadOutcomeUnknown" });
+    await expect(make().publish("run-1")).rejects.toThrow(/check the channel/);
+    expect(typeof state.metadata.youtubeUploadClaimedAt).toBe("string");
+    state.ytError = null;
+    await expect(make().publish("run-1")).rejects.toThrow(/already uploading/);
+    expect(state.ytCalls).toBe(1);
+  });
+
+  it("a failed job only releases a claim that is still its own", async () => {
+    state.ytFails = true;
+    state.onYoutube = () => { state.metadata = { ...state.metadata, youtubeUploadClaimedAt: "someone-else-took-over" }; };
+    await expect(make().publish("run-1")).rejects.toThrow(/youtube down/);
+    expect(state.metadata.youtubeUploadClaimedAt).toBe("someone-else-took-over");
+  });
 });
+

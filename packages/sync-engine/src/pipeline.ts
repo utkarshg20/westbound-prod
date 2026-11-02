@@ -122,8 +122,8 @@ export class SyncEngine {
     const db = createSupabaseAdmin();
     for (const id of trackIds) {
       const track = await this.repo.getTrack(id);
-      if (!track) {
-        logger.warn("curation skipped: track not found", { trackId: id });
+      if (!track || track.source !== "sync") {
+        logger.warn("curation skipped: no such sync track", { trackId: id });
         continue;
       }
       // Dan's hold is a decision; entering the queue must not overwrite it.
@@ -146,8 +146,13 @@ export class SyncEngine {
     const publisher = this.adapters.publishers.songtradr;
     for (const id of trackIds) {
       const track = await this.repo.getTrack(id);
-      if (!track) {
-        logger.warn("upload skipped: track not found", { trackId: id });
+      if (!track || track.source !== "sync") {
+        logger.warn("upload skipped: no such sync track", { trackId: id });
+        continue;
+      }
+      // Anything that can enqueue sync.upload_track (n8n, a dead-letter retry) must not submit a track nobody approved.
+      if (track.metadata.qaStatus !== "approved") {
+        logger.warn("upload skipped: track is not approved", { trackId: id, qaStatus: track.metadata.qaStatus });
         continue;
       }
       if (track.metadata.uploaded === true) continue; // a repeated job must not submit the same track twice
@@ -157,10 +162,13 @@ export class SyncEngine {
         mediaUri: String(track.metadata.audioUri ?? ""),
         tags: track.mood_tags,
       });
-      await createSupabaseAdmin()
+      const { error: markError } = await createSupabaseAdmin()
         .from("tracks")
-        .update({ metadata: { ...track.metadata, uploaded: true } })
+        .update({ metadata: { ...track.metadata, uploaded: true, uploadedAt: new Date().toISOString() } })
         .eq("id", id);
+      if (markError) {
+        throw new Error(`track ${id} was submitted but could not be marked uploaded (${markError.message}); do NOT retry blindly`);
+      }
     }
   }
 }

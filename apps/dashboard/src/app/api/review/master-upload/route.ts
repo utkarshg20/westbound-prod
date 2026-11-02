@@ -5,7 +5,6 @@ import {
   type ProductionStage,
 } from "@westbound/platform";
 import { createServerSupabase } from "@/lib/supabase";
-import { reviewRepository } from "@/lib/review-decision";
 import { REVIEWER_DENIED, reviewerAllowed } from "@/lib/reviewer";
 
 /**
@@ -57,7 +56,7 @@ export async function POST(req: Request) {
 
   const { data: run, error: loadErr } = await db
     .from("production_runs")
-    .select("id, stage, project_id")
+    .select("id, stage, project_id, updated_at, metadata")
     .eq("id", runId)
     .maybeSingle();
   if (loadErr) {
@@ -97,12 +96,30 @@ export async function POST(req: Request) {
   try {
     // Same service-role client as above, so no env-mismatch fallback is needed;
     // a failed write is reported instead of retried as a stale overwrite.
-    const repo = reviewRepository(db);
-    await repo.mergeProductionRunMetadata(runId, {
-      resolveMasterUri,
-      resolveMasterFilename: filename,
-      resolveMasterUploadedAt: new Date().toISOString(),
-    });
+    // Only if the run is exactly as it was when the upload began: a reviewer who approved (or a concurrent write that set
+    // scheduledAt) during the upload would otherwise have the master swapped under them, or their metadata overwritten.
+    const { data: written, error: writeErr } = await db
+      .from("production_runs")
+      .update({
+        metadata: {
+          ...((run.metadata as Record<string, unknown>) ?? {}),
+          resolveMasterUri,
+          resolveMasterFilename: filename,
+          resolveMasterUploadedAt: new Date().toISOString(),
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", runId)
+      .eq("stage", run.stage)
+      .eq("updated_at", run.updated_at)
+      .select("id");
+    if (writeErr) throw writeErr;
+    if (!written?.length) {
+      return NextResponse.json(
+        { error: "the run changed while the master was uploading (it may have been approved); the master was not attached - reload and retry" },
+        { status: 409 }
+      );
+    }
   } catch (err) {
     console.error("[master-upload] metadata write failed", err);
     return NextResponse.json(
