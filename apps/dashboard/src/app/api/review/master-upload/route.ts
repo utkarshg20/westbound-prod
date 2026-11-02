@@ -6,6 +6,7 @@ import {
 } from "@westbound/platform";
 import { createServerSupabase } from "@/lib/supabase";
 import { reviewRepository } from "@/lib/review-decision";
+import { REVIEWER_DENIED, reviewerAllowed } from "@/lib/reviewer";
 
 /**
  * S3 — Dan master hand-off.
@@ -15,12 +16,16 @@ import { reviewRepository } from "@/lib/review-decision";
  *
  * Body: multipart `file` + `runId`.
  *
- * Refused (409) once the run is published, live or failed: a master can no
- * longer reach (or change) what was released.
+ * Refused (409) once the run is scheduled, published, live or failed. "scheduled" is the approved stage: the reviewer
+ * approved a particular master, and swapping it afterwards (it used to be allowed, by any signed-in user) would
+ * publish something nobody reviewed. Only the designated reviewer may attach a master at all.
  */
-const MASTER_CLOSED_STAGES: readonly ProductionStage[] = ["published", "dsp_live", "failed"];
+const MASTER_CLOSED_STAGES: readonly ProductionStage[] = ["scheduled", "published", "dsp_live", "failed"];
 
 export async function POST(req: Request) {
+  if (!reviewerAllowed(req, "hero_publish")) {
+    return NextResponse.json({ error: REVIEWER_DENIED }, { status: 403 });
+  }
   const db = createServerSupabase();
   const form = await req.formData();
   const runId = String(form.get("runId") ?? "").trim();
