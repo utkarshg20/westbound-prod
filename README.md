@@ -100,7 +100,7 @@ requests (no API route handles GET today) and every page (`/`, `/review`, `/ops`
 `/metrics`, `/revenue`, `/calendar`, `/errors`, `/login`). Pages still render
 service-role data without sign-in; gating them is a separate owner decision. No
 dashboard API has a server-to-server caller (n8n workflows and scripts call the
-worker, which checks `x-n8n-secret` only when `N8N_WEBHOOK_SECRET` is set), so
+worker, which requires `x-n8n-secret` to match `N8N_WEBHOOK_SECRET` whenever that is set; while it is unset the worker logs an error that it is open, and `REQUIRE_N8N_SECRET=true` makes it refuse instead), so
 the gate has no machine-credential exemption and does not accept the worker secret.
 
 With the Next.js 15.5 default `experimental.middlewareClientMaxBodySize`, a route
