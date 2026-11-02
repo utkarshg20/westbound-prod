@@ -80,8 +80,14 @@ export async function POST(req: Request) {
   try {
     const storage = await AssetStorage.fromEnv();
     r2Uri = await storage.upload(key, buf, contentType);
-  } catch {
-    // R2 not configured — local dev only; stub path still creates the DB row.
+  } catch (err) {
+    if (process.env.NODE_ENV === "production") {
+      // A silent fallback here lost the file and still answered ok:true, and the review checklist (which matches on
+      // the stored URI) then showed the reference as ingested. In production a failed upload is a failed request.
+      console.error("[refs/upload] R2 upload failed", { error: err instanceof Error ? err.message : String(err) });
+      return NextResponse.json({ error: "File storage is unavailable; the reference was not saved" }, { status: 503 });
+    }
+    // R2 not configured: local development only. The stub path still creates the DB row.
   }
 
   const { error: insertErr } = await db.from("assets").insert({

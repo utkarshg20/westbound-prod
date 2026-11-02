@@ -90,9 +90,14 @@ export async function POST(req: Request) {
       .from("supervisor_outreach")
       .update({ status: "rejected" })
       .eq("id", body.itemId)
+      .eq("status", "pending_dan_review")
       .select("id");
     if (error) return databaseError("rejecting the outreach draft", error);
-    if (!data?.length) return reviewError(404, `outreach draft not found: ${body.itemId}`);
+    if (!data?.length) {
+      const { data: current } = await db.from("supervisor_outreach").select("status").eq("id", body.itemId).maybeSingle();
+      if (!current) return reviewError(404, `outreach draft not found: ${body.itemId}`);
+      return reviewError(409, `outreach draft is ${String(current.status)}; only drafts pending review can be rejected`);
+    }
   }
 
   return NextResponse.json({ ok: true });
