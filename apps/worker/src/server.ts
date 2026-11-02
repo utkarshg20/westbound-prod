@@ -8,21 +8,24 @@ export function createServer(): express.Application {
   app.use(express.json());
 
   const secret = process.env.N8N_WEBHOOK_SECRET;
-  // Fail closed. This used to check the header only when a secret was set, so a worker started without one
-  // (the .env.example default) let anyone who could reach the port enqueue any job, including ones that spend
-  // provider credits or publish to YouTube. Running open is now an explicit, non-production, local opt-in.
-  const allowOpen = process.env.WORKER_ALLOW_UNAUTHENTICATED === "true" && process.env.NODE_ENV !== "production";
-  if (!secret && !allowOpen) {
-    logger.error("N8N_WEBHOOK_SECRET is not set: every worker request except /health will be refused");
+  // With N8N_WEBHOOK_SECRET set the secret is always enforced. Without it a worker used to run open (the .env.example
+  // default), so anyone who could reach the port could enqueue any job, including ones that spend provider credits or
+  // publish to YouTube. REQUIRE_N8N_SECRET=true refuses everything but /health in that case. Left unset, an already
+  // running deployment keeps working while it logs, loudly, that it is open: tightening must not stop n8n on the
+  // deploy that ships it. Set the secret (worker, dashboard, n8n) and the worker is closed.
+  const requireSecret = process.env.REQUIRE_N8N_SECRET === "true";
+  const allowOpen = !requireSecret;
+  if (!secret && requireSecret) {
+    logger.error("N8N_WEBHOOK_SECRET is not set and REQUIRE_N8N_SECRET is set: every worker request except /health will be refused");
   } else if (!secret) {
-    logger.warn("worker running WITHOUT authentication (WORKER_ALLOW_UNAUTHENTICATED=true, not production)");
+    logger.error("N8N_WEBHOOK_SECRET is not set: the worker is accepting UNAUTHENTICATED job requests. Set the secret (worker, dashboard, n8n) to close it.");
   }
 
   app.use((req, res, next) => {
     if (req.path === "/health") return next();
     if (!secret) {
       if (allowOpen) return next();
-      res.status(503).json({ error: "Worker is not configured: set N8N_WEBHOOK_SECRET" });
+      res.status(503).json({ error: "Worker is not configured: set N8N_WEBHOOK_SECRET" }); // only with REQUIRE_N8N_SECRET=true
       return;
     }
     const provided = String(req.headers["x-n8n-secret"] ?? "");

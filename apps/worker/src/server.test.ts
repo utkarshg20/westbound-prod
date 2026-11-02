@@ -16,7 +16,7 @@ vi.mock("./handlers.js", () => ({ runPocJob: vi.fn(async () => []), runVerticalS
 
 const { createServer } = await import("./server.js");
 
-const KEYS = ["N8N_WEBHOOK_SECRET", "WORKER_ALLOW_UNAUTHENTICATED", "NODE_ENV"] as const;
+const KEYS = ["N8N_WEBHOOK_SECRET", "REQUIRE_N8N_SECRET", "NODE_ENV"] as const;
 const saved: Record<string, string | undefined> = {};
 let close: (() => void) | undefined;
 
@@ -48,26 +48,31 @@ async function boot(env: Partial<Record<(typeof KEYS)[number], string>>) {
 }
 
 describe("worker authentication", () => {
-  it("refuses everything except /health when no secret is configured (fail closed)", async () => {
-    const call = await boot({});
+  it("with REQUIRE_N8N_SECRET and no secret, refuses everything except /health", async () => {
+    const call = await boot({ REQUIRE_N8N_SECRET: "true" });
     expect((await call("/health", { method: "GET" })).status).toBe(200);
-    const r = await call("/api/jobs/enqueue", { body: { type: "youtube.publish" } });
-    expect(r.status).toBe(503);
+    expect((await call("/api/jobs/enqueue", { body: { type: "youtube.publish" } })).status).toBe(503);
     expect((await call("/api/studio/poc")).status).toBe(503);
     expect((await call("/api/studio/vertical-slice")).status).toBe(503);
     expect(enqueueJob).not.toHaveBeenCalled();
   });
 
-  it("does not run open in production even when the opt-in flag is set", async () => {
-    const call = await boot({ WORKER_ALLOW_UNAUTHENTICATED: "true", NODE_ENV: "production" });
+  it("REQUIRE_N8N_SECRET also holds in production", async () => {
+    const call = await boot({ REQUIRE_N8N_SECRET: "true", NODE_ENV: "production" });
     expect((await call("/api/jobs/enqueue", { body: { type: "youtube.publish" } })).status).toBe(503);
     expect(enqueueJob).not.toHaveBeenCalled();
   });
 
-  it("runs open only with the explicit local opt-in outside production", async () => {
-    const call = await boot({ WORKER_ALLOW_UNAUTHENTICATED: "true", NODE_ENV: "development" });
+  it("with no secret and no requirement a running deployment keeps answering (n8n is not stopped by this release)", async () => {
+    const call = await boot({ NODE_ENV: "production" });
     expect((await call("/api/jobs/enqueue", { body: { type: "youtube.publish" } })).status).toBe(200);
     expect(enqueueJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("setting the secret closes it with no other flag, in production too", async () => {
+    const call = await boot({ N8N_WEBHOOK_SECRET: "s3cret", NODE_ENV: "production" });
+    expect((await call("/api/jobs/enqueue", { body: { type: "youtube.publish" } })).status).toBe(401);
+    expect((await call("/api/jobs/enqueue", { secret: "s3cret", body: { type: "youtube.publish" } })).status).toBe(200);
   });
 
   it("with a secret set: a missing or wrong header is 401, the right one is accepted", async () => {
@@ -79,8 +84,8 @@ describe("worker authentication", () => {
     expect((await call("/api/jobs/enqueue", { secret: "s3cret", body: { type: "youtube.publish" } })).status).toBe(200);
   });
 
-  it("the opt-in flag never weakens a configured secret", async () => {
-    const call = await boot({ N8N_WEBHOOK_SECRET: "s3cret", WORKER_ALLOW_UNAUTHENTICATED: "true", NODE_ENV: "development" });
+  it("a configured secret is enforced in development too", async () => {
+    const call = await boot({ N8N_WEBHOOK_SECRET: "s3cret", NODE_ENV: "development" });
     expect((await call("/api/jobs/enqueue", { body: { type: "youtube.publish" } })).status).toBe(401);
   });
 });
