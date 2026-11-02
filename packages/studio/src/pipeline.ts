@@ -19,6 +19,9 @@ import { resolvePublishMediaUri } from "./publish-media.js";
 
 export { resolvePublishMediaUri } from "./publish-media.js";
 
+/** An upload claim older than this belongs to a job that crashed. */
+const UPLOAD_CLAIM_TTL_MS = 30 * 60 * 1000;
+
 const STAGES: ProductionStage[] = [
   "draft",
   "generating",
@@ -266,7 +269,10 @@ export class StudioPipeline {
     // The review gate has to hold HERE, before any side effect: this used to upload to YouTube first and only then
     // trip over the stage transition, so anything that could enqueue youtube.publish (n8n, a DLQ retry, Redis) could
     // publish a run nobody approved, and a rejected or draft run still went out before the error.
-    if (run.stage !== "scheduled") {
+    // A run stuck at "published" because the last stage move failed after the upload was recorded may be finished by a retry
+    // (no second upload): it used to stay there for ever.
+    const finishingPublished = run.stage === "published" && Boolean(run.metadata.youtubePublishedAt);
+    if (run.stage !== "scheduled" && !finishingPublished) {
       throw new Error(
         `Refusing to publish run ${runId}: it is in stage ${run.stage}, not scheduled (only a reviewed and approved run is published)`
       );
@@ -295,17 +301,50 @@ export class StudioPipeline {
     if (run.metadata.youtubePublishedAt) {
       // A retry after the upload succeeded but a later step failed: do not upload the video a second time.
     } else {
-      await publishers.youtube.publish({
-        title,
-        description: String(run.metadata.description ?? "Sammy Rane and Westbound"),
-        mediaUri,
-        scheduledAt: run.metadata.scheduledAt
-          ? new Date(String(run.metadata.scheduledAt))
-          : undefined,
-        tags: ["Sammy Rane", "Westbound", "rockumentary"],
-      });
+      // One upload at a time. Two jobs for the same run (a re-queue after a timeout, a dead-letter retry) both saw "scheduled" and
+      // both uploaded. The claim is a compare-and-set on the claim marker itself; a claim older than UPLOAD_CLAIM_TTL_MS is
+      // a crashed job's and may be taken over.
+      const previousClaim = run.metadata.youtubeUploadClaimedAt as string | undefined;
+      if (previousClaim && Date.now() - Date.parse(previousClaim) < UPLOAD_CLAIM_TTL_MS) {
+        throw new Error(`Another job is already uploading run ${runId} (claimed ${previousClaim}); not uploading twice`);
+      }
+      const claimedAt = new Date().toISOString();
+      let claim = adminForPublish()
+        .from("production_runs")
+        .update({ metadata: { ...metadataNow, youtubeUploadClaimedAt: claimedAt } })
+        .eq("id", runId);
+      claim = previousClaim
+        ? claim.eq("metadata->>youtubeUploadClaimedAt", previousClaim)
+        : claim.is("metadata->>youtubeUploadClaimedAt", null);
+      const { data: claimed, error: claimError } = await claim.select("id");
+      if (claimError) throw new Error(`could not claim the upload for run ${runId}: ${claimError.message}`);
+      if (!claimed?.length) throw new Error(`Lost the upload claim for run ${runId} to another job; not uploading twice`);
+      metadataNow = { ...metadataNow, youtubeUploadClaimedAt: claimedAt };
+
+      let uploaded: { externalId: string; url?: string };
+      try {
+        uploaded = await publishers.youtube.publish({
+          title,
+          description: String(run.metadata.description ?? "Sammy Rane and Westbound"),
+          mediaUri,
+          scheduledAt: run.metadata.scheduledAt
+            ? new Date(String(run.metadata.scheduledAt))
+            : undefined,
+          tags: ["Sammy Rane", "Westbound", "rockumentary"],
+        });
+      } catch (error) {
+        // The upload failed: give the claim back so the retry can try again instead of waiting out the TTL.
+        const { youtubeUploadClaimedAt: _released, ...withoutClaim } = metadataNow;
+        await adminForPublish().from("production_runs").update({ metadata: withoutClaim }).eq("id", runId);
+        throw error;
+      }
       // Record that the upload happened before anything else can fail, so a retry does not repeat it.
-      metadataNow = { ...metadataNow, youtubePublishedAt: new Date().toISOString() };
+      metadataNow = {
+        ...metadataNow,
+        youtubePublishedAt: new Date().toISOString(),
+        youtubeVideoId: uploaded.externalId,
+        youtubeUrl: uploaded.url,
+      };
       const { error: markError } = await adminForPublish()
         .from("production_runs")
         .update({ metadata: metadataNow })
@@ -341,7 +380,7 @@ export class StudioPipeline {
       .update({ metadata })
       .eq("id", runId);
 
-    await this.repo.updateProductionStage(runId, "published");
+    if (!finishingPublished) await this.repo.updateProductionStage(runId, "published");
     return this.repo.updateProductionStage(runId, "dsp_live");
   }
 

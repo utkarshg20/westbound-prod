@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   metadata: {} as Record<string, unknown>,
   ytCalls: 0,
   failDspLiveOnce: false,
+  ytFails: false,
   markError: null as { message: string } | null,
   updates: [] as Record<string, unknown>[],
 }));
@@ -31,13 +32,26 @@ vi.mock("@westbound/platform", async (importOriginal) => {
     }),
     createSupabaseAdmin: () => ({
       from: () => ({
-        update: (values: { metadata: Record<string, unknown> }) => ({
-          eq: async () => {
+        update: (values: { metadata: Record<string, unknown> }) => {
+          // A chainable, awaitable query like PostgREST's: .eq/.is filters, .select() returns the rows it touched.
+          const filters: Array<[string, unknown]> = [];
+          const apply = () => {
+            const claimFilter = filters.find(([c]) => c === "metadata->>youtubeUploadClaimedAt");
+            if (claimFilter && (state.metadata.youtubeUploadClaimedAt ?? null) !== claimFilter[1]) return { data: [], error: null };
+            const isClaim = Boolean(claimFilter) || (values.metadata.youtubeUploadClaimedAt !== undefined && values.metadata.youtubePublishedAt === undefined);
+            const error = isClaim ? null : state.markError;
             state.updates.push(values.metadata);
-            if (!state.markError) state.metadata = values.metadata;
-            return { error: state.markError };
-          },
-        }),
+            if (!error) state.metadata = values.metadata;
+            return { data: [{ id: "run-1" }], error };
+          };
+          const q: Record<string, unknown> = {
+            eq: (c: string, v: unknown) => (filters.push([c, v]), q),
+            is: (c: string, v: unknown) => (filters.push([c, v]), q),
+            select: async () => apply(),
+            then: (resolve: (v: unknown) => unknown) => resolve(apply()),
+          };
+          return q;
+        },
       }),
     }),
   };
@@ -47,7 +61,11 @@ const { StudioPipeline } = await import("./pipeline.js");
 const make = () =>
   new (StudioPipeline as unknown as new (library: unknown, adapters: unknown) => InstanceType<typeof StudioPipeline>)(
     {},
-    { publishers: { youtube: { publish: async () => { state.ytCalls++; } } } }
+    { publishers: { youtube: { publish: async () => {
+      state.ytCalls++;
+      if (state.ytFails) throw new Error("youtube down");
+      return { externalId: "vid-1", url: "https://www.youtube.com/watch?v=vid-1" };
+    } } } }
   );
 
 beforeEach(() => {
@@ -55,6 +73,7 @@ beforeEach(() => {
   state.metadata = { resolveMasterUri: "r2://b/m.mov" };
   state.ytCalls = 0;
   state.failDspLiveOnce = false;
+  state.ytFails = false;
   state.markError = null;
   state.updates = [];
 });
@@ -80,8 +99,9 @@ describe("StudioPipeline.publish review gate", () => {
     state.failDspLiveOnce = true;
     await expect(make().publish("run-1")).rejects.toThrow(/transient/);
     expect(state.ytCalls).toBe(1);
-    expect(state.stage).toBe("published"); // got as far as published; the retry is refused at the stage gate, never re-uploads
-    await expect(make().publish("run-1")).rejects.toThrow(/not scheduled/);
+    expect(state.stage).toBe("published"); // got as far as published
+    const finished = await make().publish("run-1"); // the retry finishes the move without uploading again
+    expect(finished.stage).toBe("dsp_live");
     expect(state.ytCalls).toBe(1);
   });
 
@@ -95,5 +115,33 @@ describe("StudioPipeline.publish review gate", () => {
     state.metadata = { resolveMasterUri: "r2://b/m.mov", youtubePublishedAt: "2026-10-22T00:00:00Z" };
     await make().publish("run-1");
     expect(state.ytCalls).toBe(0);
+  });
+
+  it("records the video id YouTube returned", async () => {
+    await make().publish("run-1");
+    expect(state.metadata.youtubeVideoId).toBe("vid-1");
+    expect(state.metadata.youtubeUrl).toContain("vid-1");
+  });
+
+  it("a second job for the same run does not upload while the first holds the claim", async () => {
+    state.metadata = { resolveMasterUri: "r2://b/m.mov", youtubeUploadClaimedAt: new Date().toISOString() };
+    await expect(make().publish("run-1")).rejects.toThrow(/already uploading/);
+    expect(state.ytCalls).toBe(0);
+  });
+
+  it("a claim left by a crashed job is taken over after the timeout", async () => {
+    state.metadata = { resolveMasterUri: "r2://b/m.mov", youtubeUploadClaimedAt: new Date(Date.now() - 31 * 60_000).toISOString() };
+    const run = await make().publish("run-1");
+    expect(state.ytCalls).toBe(1);
+    expect(run.stage).toBe("dsp_live");
+  });
+
+  it("a failed upload gives the claim back so the retry can run at once", async () => {
+    state.ytFails = true;
+    await expect(make().publish("run-1")).rejects.toThrow(/youtube down/);
+    expect(state.metadata.youtubeUploadClaimedAt).toBeUndefined();
+    state.ytFails = false;
+    await make().publish("run-1");
+    expect(state.ytCalls).toBe(2);
   });
 });
