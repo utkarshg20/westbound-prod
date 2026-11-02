@@ -263,7 +263,7 @@ describe("verified mutations and refresh", () => {
   });
 
   it.each([
-    ["/api/review/approve", "GET"], ["/api/ops/dlq-retry", "GET"], ["/review", "GET"], ["/ops", "GET"], ["/ops", "POST"],
+    ["/api/review/approve", "GET"], ["/api/ops/dlq-retry", "GET"],
     ["/api/auth/magic-link", "POST"], ["/api/auth/logout", "POST"],
   ])("leaves %s %s outside this gate", async (path, method) => {
     expect((await middleware(request(path, { method }))).headers.get("x-middleware-next")).toBe("1");

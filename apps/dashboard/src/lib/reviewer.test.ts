@@ -19,12 +19,19 @@ describe("reviewerAllowed", () => {
     expect(reviewerAllowed(req("other@example.test"), "sync")).toBe(true);
   });
 
-  it("fails closed in production when no reviewer is configured, and stays open only outside production", () => {
+  it("with no reviewer configured the review flow keeps working (and says it is open), in production too", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.stubEnv("REVIEWER_EMAIL", "");
     vi.stubEnv("NODE_ENV", "production");
-    expect(reviewerAllowed(req("anyone@example.test"), "hero_publish")).toBe(false);
-    vi.stubEnv("NODE_ENV", "development");
     expect(reviewerAllowed(req("anyone@example.test"), "hero_publish")).toBe(true);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("REVIEWER_EMAIL is not set"));
+    err.mockRestore();
+  });
+
+  it("REQUIRE_REVIEWER_EMAIL makes an unset reviewer mean nobody can decide", () => {
+    vi.stubEnv("REVIEWER_EMAIL", "");
+    vi.stubEnv("REQUIRE_REVIEWER_EMAIL", "true");
+    expect(reviewerAllowed(req("anyone@example.test"), "hero_publish")).toBe(false);
   });
 });
 

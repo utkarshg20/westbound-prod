@@ -216,6 +216,12 @@ export class WestboundRepository {
     return data as Track;
   }
 
+  async getTrack(id: string): Promise<Track | null> {
+    const { data, error } = await this.db.from("tracks").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return data ? TrackSchema.parse(data) : null;
+  }
+
   async listTracks(filters?: {
     source?: Track["source"];
     projectId?: string;

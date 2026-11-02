@@ -18,7 +18,9 @@ function appPaths(file: "page.tsx" | "route.ts", dir = appDir): string[] {
 const matches = (path: string) => unstable_doesMiddlewareMatch({ config, url: `https://studio.example.test${path}` });
 const routes = appPaths("route.ts");
 const gated = routes.filter((path) => path.startsWith("/api/") && !path.startsWith("/api/auth/"));
-const outside = [...routes.filter((path) => !gated.includes(path)), ...appPaths("page.tsx")];
+const signInFlow = ["/api/auth/magic-link", "/api/auth/logout", "/auth/confirm", "/login"];
+const pages = appPaths("page.tsx").filter((path) => !signInFlow.includes(path));
+const open = [...routes.filter((path) => !gated.includes(path)), ...appPaths("page.tsx").filter((path) => signInFlow.includes(path))];
 
 describe("middleware matcher", () => {
   it("runs the session gate for every API route outside /api/auth/*", () => {
@@ -26,8 +28,17 @@ describe("middleware matcher", () => {
     expect(gated.filter((path) => !matches(path))).toEqual([]);
   });
 
-  it("never runs for /api/auth/*, /auth/confirm or pages", () => {
-    expect(outside).toEqual(expect.arrayContaining(["/api/auth/magic-link", "/api/auth/logout", "/auth/confirm", "/", "/ops", "/review", "/login"]));
-    expect(outside.filter(matches)).toEqual([]);
+  it("runs the session gate for every page except the sign-in flow", () => {
+    expect(pages).toEqual(expect.arrayContaining(["/", "/ops", "/review", "/revenue", "/metrics", "/calendar", "/errors"]));
+    expect(pages.filter((path) => !matches(path))).toEqual([]);
+  });
+
+  it("never runs for /api/auth/*, /auth/confirm or /login", () => {
+    expect(open).toEqual(expect.arrayContaining(["/api/auth/magic-link", "/api/auth/logout", "/auth/confirm", "/login"]));
+    expect(open.filter(matches)).toEqual([]);
+  });
+
+  it("does not run for Next.js assets", () => {
+    expect(["/_next/static/chunks/app.js", "/favicon.ico"].filter(matches)).toEqual([]);
   });
 });

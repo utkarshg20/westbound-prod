@@ -1,3 +1,5 @@
+import { recordContinuityResult } from "./continuity.js";
+import { isFinalFailure } from "./failure.js";
 import type { Job } from "bullmq";
 import {
   createAllWorkers,
@@ -39,6 +41,11 @@ async function logError(
   } catch {
     logger.error("Failed to persist job error", { message });
   }
+}
+
+/** The job enqueueChannelVideo queues for the run it just created: it names that run or video. */
+export function isAssembleFollowUp(payload: Record<string, unknown>): boolean {
+  return Boolean(payload.runId || payload.videoId);
 }
 
 export function startWorkers(): ReturnType<typeof createAllWorkers> {
@@ -133,6 +140,14 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
       if (job.data.payload.proof14 === true) {
         const ids = await factory.schedule14DayProof(channel);
         logger.info("14-day YT proof scheduled", { count: ids.length, channel });
+      } else if (isAssembleFollowUp(job.data.payload)) {
+        // enqueueChannelVideo ends by enqueuing this job for the run it just created, with the same topic. Treating
+        // that follow-up as a new request enqueued another run, and another, for as long as the queue was left alone
+        // (a row, a production run and an LLM call per pass). Nothing assembles an existing run here yet, so say so
+        // and stop rather than start a new one.
+        logger.warn("assemble_video follow-up for an existing run: nothing to assemble, not starting another", {
+          channel, runId: job.data.payload.runId, videoId: job.data.payload.videoId,
+        });
       } else if (job.data.payload.topic) {
         await enqueueChannelVideo(channel, String(job.data.payload.topic));
       } else {
@@ -140,8 +155,10 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
       }
     },
     "youtube.publish": async (job) => {
-      const runId = String(job.data.payload.runId ?? job.data.productionRunId);
-      if (!runId) throw new Error("runId required for youtube.publish");
+      const rawRunId = job.data.payload.runId ?? job.data.productionRunId;
+      // String(undefined) is the truthy string "undefined": check the value, not its string form.
+      if (typeof rawRunId !== "string" || !rawRunId) throw new Error("runId required for youtube.publish");
+      const runId = rawRunId;
       const pipeline = await StudioPipeline.create();
       await pipeline.publish(runId);
       logger.info("Episode published", { runId });
@@ -278,13 +295,7 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
         ],
         { productionRunId: runId }
       );
-      await createSupabaseAdmin()
-        .from("production_runs")
-        .update({
-          metadata: { ...run.metadata, continuity: result },
-          stage: result.passed ? run.stage : "dan_review",
-        })
-        .eq("id", runId);
+      await recordContinuityResult(repo, runId, result);
       logger.info("Continuity check complete", {
         runId,
         passed: result.passed,
@@ -329,7 +340,7 @@ export function startWorkers(): ReturnType<typeof createAllWorkers> {
 
   for (const worker of workers) {
     worker.on("failed", (job, err) => {
-      if (job) void logError(job, err.message);
+      if (job && isFinalFailure(job)) void logError(job, err.message);
       logger.error("Job failed", {
         jobId: job?.id,
         jobType: job?.data.type,

@@ -18,6 +18,7 @@ export default defineConfig({
     include: [
       "packages/**/*.test.ts",
       "apps/dashboard/src/**/*.test.ts",
+      "apps/worker/src/**/*.test.ts",
     ],
   },
 });
